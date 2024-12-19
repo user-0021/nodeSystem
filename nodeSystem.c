@@ -268,7 +268,7 @@ int nodeSystemRead(int pipeID,void* buffer,uint16_t size){
 
 int nodeSystemWrite(int pipeID,void* buffer,uint16_t size){
 
-	if(_pipes[pipeID].type != NODE_IN)
+	if(_pipes[pipeID].type != NODE_OUT)
 		return -1;
 
 	//write count
