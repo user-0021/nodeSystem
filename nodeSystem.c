@@ -93,7 +93,7 @@ int nodeSystemInit(){
 	write(STDOUT_FILENO,&_node_init_eof,sizeof(_node_init_eof));
 }
 
-int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength){
+int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,void* buff){
 	//check system state
 	if(_nodeSystemIsActive){
 		return -3;
@@ -134,6 +134,12 @@ int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT un
 	}
 	_pipes[_pipe_count] = pipe;
 
+	//set init value
+	if(type == NODE_CONST && buff){
+		_pipes[_pipe_count].memory = malloc(NODE_DATA_UNIT_SIZE[unit]*arrayLength);
+		memcpy(_pipes[_pipe_count].memory,buff,NODE_DATA_UNIT_SIZE[unit]*arrayLength);
+	}
+
 	return _pipe_count++;
 }
 
@@ -154,10 +160,23 @@ int nodeSystemBegine(){
 	for(i = 0;i < _pipe_count;i++){
 		if(_pipes[i].type != NODE_IN){
 			read(STDIN_FILENO,&_pipes[i].sID,sizeof(_pipes[i].sID));
-			if(_pipes[i].type == NODE_OUT)
+			if(_pipes[i].type == NODE_CONST){
+				void* tmp = _pipes[i].memory;
 				_pipes[i].memory = shmat(_pipes[i].sID,NULL,0);
+				if(_pipes[i].memory > 0){
+					if(tmp){
+						//cpy init value
+						memcpy(_pipes[i].memory+1,tmp,
+							NODE_DATA_UNIT_SIZE[_pipes[i].unit]*_pipes[i].length);
+						((uint8_t*)_pipes[i].memory)[0]++;
+						free(tmp);
+					}
+					shmdt(_pipes[i].memory);
+					_pipes[i].memory = shmat(_pipes[i].sID,NULL,SHM_RDONLY);
+				}
+			}
 			else
-				_pipes[i].memory = shmat(_pipes[i].sID,NULL,SHM_RDONLY);
+				_pipes[i].memory = shmat(_pipes[i].sID,NULL,0);
 
 			if(_pipes[i].memory < 0){
 				nodeSystemDebugLog(strerror(errno));
@@ -256,13 +275,14 @@ int nodeSystemRead(int pipeID,void* buffer,uint16_t size){
 	
 	//read count
 	uint8_t count = ((char*)_pipes[pipeID].memory)[0];
-	if(count == _pipes[pipeID].count)
-		return 0;
-	_pipes[pipeID].count = count;
 
 	//copy data
 	memcpy(buffer,_pipes[pipeID].memory+1,NODE_DATA_UNIT_SIZE[_pipes[pipeID].unit] * _pipes[pipeID].length);
+	
+	if(count == _pipes[pipeID].count)
+			return 0;
 
+	_pipes[pipeID].count = count;
 	return 1;
 }
 
