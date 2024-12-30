@@ -93,7 +93,7 @@ int nodeSystemInit(){
 	write(STDOUT_FILENO,&_node_init_eof,sizeof(_node_init_eof));
 }
 
-int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,void* buff){
+int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,const void* buff){
 	//check system state
 	if(_nodeSystemIsActive){
 		return -3;
