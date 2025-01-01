@@ -30,6 +30,7 @@ static time_t timeZone;
 static uint16_t _pipe_count = 0;
 static _node_pipe* _pipes = NULL;
 static int _parent;
+char* nodeName = NULL;
 
 static const uint32_t _node_init_head = 0x83DFC690;
 static const uint32_t _node_init_eof  = 0x85CBADEF;
@@ -143,7 +144,7 @@ int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT un
 	return _pipe_count++;
 }
 
-int nodeSystemBegine(){
+int nodeSystemBegine(char** name){
 	//check system state
 	if(_nodeSystemIsActive != 1){
 		return -3;
@@ -154,6 +155,14 @@ int nodeSystemBegine(){
 
 	//send header
 	write(STDOUT_FILENO,&_node_begin_head,sizeof(_node_begin_head));
+	
+	//recive node name
+	uint16_t len;
+	read(STDIN_FILENO,&len,sizeof(len));
+	nodeName = malloc(len);
+	read(STDIN_FILENO,nodeName,len);
+	if(name)
+		*name = nodeName;
 
 	//send pipe data
 	uint16_t i;
