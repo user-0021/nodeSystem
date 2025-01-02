@@ -22,6 +22,11 @@ typedef enum{
 	NODE_DOUBLE		= 12
 } NODE_DATA_UNIT;
 
+typedef enum{
+	NODE_DEBUG_MESSAGE = 0,
+	NODE_DEBUG_CSV = 1
+} NODE_DEBUG_MODE;
+
 static const char* NODE_DATA_UNIT_STR[13] = {
 	"",
 	"CHAR",
@@ -56,8 +61,9 @@ static const uint16_t NODE_DATA_UNIT_SIZE[13] = {
 
 int nodeSystemInit();
 int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,const void* buff);
-int nodeSystemBegine(char** name);
+int nodeSystemBegine();
 int nodeSystemLoop();
 void nodeSystemDebugLog(char* const str);
+int nodeStstemSetDebugMode(NODE_DEBUG_MODE mode);
 int nodeSystemRead(int pipeID,void* buffer,uint16_t size);
 int nodeSystemWrite(int pipeID,void* buffer,uint16_t size);
