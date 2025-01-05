@@ -30,6 +30,7 @@ static uint8_t no_log;
 static time_t timeZone;
 static uint16_t _pipe_count = 0;
 static _node_pipe* _pipes = NULL;
+static int _self;
 static int _parent;
 
 static const uint32_t _node_init_head = 0x83DFC690;
@@ -48,7 +49,8 @@ int nodeSystemInit(){
 	//set state
 	_nodeSystemIsActive = 1;
 
-	//set parentPid
+	//set Pid
+	_self = getpid();
 	_parent = getppid();
 
 	//calc timezone
@@ -239,6 +241,12 @@ int nodeSystemLoop(){
 }
 
 void nodeSystemDebugLog(char* const str){
+	//check system state
+	if(_nodeSystemIsActive != 1){
+		return;
+	}
+
+	//check log flag
 	if(no_log)
 		return;
 
@@ -288,7 +296,12 @@ static char* getRealTimeStr(){
 }
 
 int nodeSystemRead(int pipeID,void* buffer,uint16_t size){
+	//check system state
+	if(_nodeSystemIsActive != 2){
+		return -3;
+	}
 	
+	//check pipe type
 	if(!_pipes[pipeID].sID || _pipes[pipeID].type == NODE_OUT)
 		return -1;
 	
@@ -306,7 +319,12 @@ int nodeSystemRead(int pipeID,void* buffer,uint16_t size){
 }
 
 int nodeSystemWrite(int pipeID,void* buffer,uint16_t size){
-
+	//check system state
+	if(_nodeSystemIsActive != 2){
+		return -3;
+	}
+	
+	//check pipe type
 	if(_pipes[pipeID].type != NODE_OUT)
 		return -1;
 
@@ -317,4 +335,37 @@ int nodeSystemWrite(int pipeID,void* buffer,uint16_t size){
 	memcpy(_pipes[pipeID].memory+1,buffer,NODE_DATA_UNIT_SIZE[_pipes[pipeID].unit] * _pipes[pipeID].length);
 
 	return 0;
+}
+
+void nodeSystemWait(){
+	//check system state
+	if(_nodeSystemIsActive != 2){
+		return -3;
+	}
+
+	int pid = fork();	
+
+	if(pid == -1){
+		//failed  fork
+		char errorMsg[1024];
+		sprintf(errorMsg,"%s:%s",__func__,strerror(errno));
+		nodeSystemDebugLog(errorMsg);
+		return -1;
+	}
+
+	if(pid != 0){
+		//parent
+		kill(_self,SIGTSTP);
+		kill(pid,SIGTERM);
+	}else{//child
+		//get parent
+		int p = getppid();
+		//sleep
+		while(kill(_parent,0))
+			sleep(10);
+		//kill if this process don't killed
+		kill(p,SIGTERM);
+		exit(0);
+	}
+
 }

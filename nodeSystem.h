@@ -67,3 +67,4 @@ void nodeSystemDebugLog(char* const str);
 int nodeStstemSetDebugMode(NODE_DEBUG_MODE mode);
 int nodeSystemRead(int pipeID,void* buffer,uint16_t size);
 int nodeSystemWrite(int pipeID,void* buffer,uint16_t size);
+void nodeSystemWait();
