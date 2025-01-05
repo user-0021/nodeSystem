@@ -1,4 +1,4 @@
-#include <nodeSystem.h>
+#include "nodeSystem.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -23,6 +23,7 @@ typedef struct{
 } _node_pipe;
 
 static uint8_t _nodeSystemIsActive = 0;
+static NODE_DEBUG_MODE _dMode = NODE_DEBUG_MESSAGE;
 
 static FILE* logFile;
 static uint8_t no_log;
@@ -65,6 +66,12 @@ int nodeSystemInit(){
 	read(STDIN_FILENO,&len,sizeof(len));
 	read(STDIN_FILENO,tmp,len);
 
+	if(_dMode == NODE_DEBUG_CSV){
+		char* ex = strrchr(tmp,'.');
+		if(ex)
+			strcpy(ex+1,"csv");
+	}
+
 	//create log file
 	if(!no_log){
 		logFile = fopen(tmp,"w");
@@ -93,7 +100,7 @@ int nodeSystemInit(){
 	write(STDOUT_FILENO,&_node_init_eof,sizeof(_node_init_eof));
 }
 
-int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,void* buff){
+int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,const void* buff){
 	//check system state
 	if(_nodeSystemIsActive){
 		return -3;
@@ -247,6 +254,18 @@ void nodeSystemDebugLog(char* const str){
 	fwrite("\n",1,1,logFile);
 
 	fflush(logFile);
+}
+
+int nodeStstemSetDebugMode(NODE_DEBUG_MODE mode){
+	//check system state
+	if(_nodeSystemIsActive){
+		return -3;
+	}
+
+	//change mode
+	_dMode = mode;
+
+	return 0;
 }
 
 static char* getRealTimeStr(){
