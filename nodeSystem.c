@@ -1979,8 +1979,8 @@ int nodeSystemInit(){
 	write(STDOUT_FILENO,&_node_init_head,sizeof(_node_init_head));
 
 	//read system Env
-	fileRead(STDIN_FILENO,&systemSettingKey.shmId,sizeof(int));
 	fileRead(STDIN_FILENO,&systemSettingKey.semId,sizeof(int));
+	fileRead(STDIN_FILENO,&systemSettingKey.shmId,sizeof(int));
 	systemSettingKey.shmMap = shmat(systemSettingKey.shmId,NULL,SHM_RDONLY);
 	systemSettingMemory = malloc(sizeof(nodeSystemEnv));
 	memcpy(systemSettingMemory,systemSettingKey.shmMap,sizeof(nodeSystemEnv));
@@ -2092,14 +2092,14 @@ int nodeSystemBegine(){
 		//if pipe type is not PIPE_IN
 		if(_pipes[i].type != NODE_PIPE_IN){
 			//receive share memory
-			fileRead(STDIN_FILENO,&_pipes[i].shmId,sizeof(_pipes[i].shmId));
-			fileRead(STDIN_FILENO,&_pipes[i].semId,sizeof(_pipes[i].semId));
+			fileRead(STDIN_FILENO,&_pipes[i].shm.semId,sizeof(_pipes[i].shm.semId));
+			fileRead(STDIN_FILENO,&_pipes[i].shm.shmId,sizeof(_pipes[i].shm.shmId));
 			
 			//if pipe type is PIPE_CONST
 			if(_pipes[i].type == NODE_PIPE_CONST){
 				//attach share memory for write
 				void* initVal = _pipes[i].memory;
-				_pipes[i].memory = shmat(_pipes[i].shmId,NULL,0);
+				_pipes[i].memory = shmat(_pipes[i].shm.shmId,NULL,0);
 
 				//if attach success
 				if(_pipes[i].memory > 0){
@@ -2115,12 +2115,12 @@ int nodeSystemBegine(){
 					}
 					//dettach and attach sheare memory for read 
 					shmdt(_pipes[i].memory);
-					_pipes[i].memory = shmat(_pipes[i].shmId,NULL,SHM_RDONLY);
+					_pipes[i].memory = shmat(_pipes[i].shm.shmId,NULL,SHM_RDONLY);
 				}
 			}
 			else{
 				//attach share memory for write
-				_pipes[i].memory = shmat(_pipes[i].shmId,NULL,0);
+				_pipes[i].memory = shmat(_pipes[i].shm.shmId,NULL,0);
 			}
 
 			//if failed shmat
@@ -2151,7 +2151,7 @@ int nodeSystemLoop(){
 		//set blocking
 		fcntl(STDIN_FILENO ,F_SETFL,fcntl(STDIN_FILENO ,F_GETFL) & (~O_NONBLOCK));
 
-		if(_pipes[pipeId].shmId != 0){
+		if(_pipes[pipeId].shm.shmId != 0){
 			if(shmdt(_pipes[pipeId].memory) < 0){
 				char msg[4096];
 				sprintf(msg,"Pipe[%s] failed shmdt():%s",_pipes[pipeId].pipeName,strerror(errno));
@@ -2160,10 +2160,10 @@ int nodeSystemLoop(){
 		}
 
 		_pipes[pipeId].count = 0;
-		fileRead(STDIN_FILENO,&_pipes[pipeId].shmId,sizeof(_pipes[pipeId].shmId));
-		fileRead(STDIN_FILENO,&_pipes[pipeId].semId,sizeof(_pipes[pipeId].semId));
-		if(_pipes[pipeId].shmId != 0){			
-			_pipes[pipeId].memory = shmat(_pipes[pipeId].shmId,NULL,SHM_RDONLY);
+		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shm.shmId));
+		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.semId,sizeof(_pipes[pipeId].shm.semId));
+		if(_pipes[pipeId].shm.shmId != 0){			
+			_pipes[pipeId].memory = shmat(_pipes[pipeId].shm.shmId,NULL,SHM_RDONLY);
 
 			char msg[4096];
 			sprintf(msg,"Pipe[%s] pipe connected",_pipes[pipeId].pipeName);
@@ -2185,12 +2185,12 @@ int nodeSystemLoop(){
 
 void nodeSystemDebugLog(char* const str){
 	//check system state
-	if(_nodeSystemIsActive != 1){
+	if(_nodeSystemIsActive <= 1){
 		return;
 	}
 
 	//check log flag
-	if(!systemSettingMemory->isNoLog)
+	if(systemSettingMemory->isNoLog)
 		return;
 
 	char* time = getRealTimeStr();
@@ -2226,7 +2226,7 @@ int nodeSystemRead(int pipeID,void* buffer){
 	}
 	
 	//check pipe type
-	if(!_pipes[pipeID].shmId || _pipes[pipeID].type == NODE_PIPE_OUT)
+	if(!_pipes[pipeID].shm.shmId || _pipes[pipeID].type == NODE_PIPE_OUT)
 		return NODE_ERROR_INVALID_ARGS;
 	
 	//read count
