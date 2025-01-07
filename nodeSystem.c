@@ -51,8 +51,8 @@ static int fileRead(   int fd,void* buf,ssize_t size);
 static int fileReadStr(int fd,char* str,ssize_t size);
 static int fileReadWithTimeOut(   int fd,void* buf,ssize_t size,uint32_t usec);
 static int fileReadStrWithTimeOut(int fd,char* str,ssize_t size,uint32_t usec);
-static int fileWrite(   int fd,void* buf,ssize_t size);
-static int fileWriteStr(int fd,char* str);
+static int fileWrite(   int fd,const void* buf,ssize_t size);
+static int fileWriteStr(int fd,const char* str);
 
 // #define NODE_SYSTEM_HOST
 #ifdef NODE_SYSTEM_HOST
@@ -2120,7 +2120,7 @@ int nodeSystemBegine(){
 	//set state
 	_nodeSystemIsActive = 2;
 
-	return NODE_SUCCESS
+	return NODE_SUCCESS;
 }
 
 
@@ -2197,7 +2197,7 @@ int nodeStstemSetDebugMode(NODE_DEBUG_MODE mode){
 	//change mode
 	_dMode = mode;
 
-	return NODE_SUCCESS
+	return NODE_SUCCESS;
 }
 
 int nodeSystemRead(int pipeID,void* buffer){
@@ -2207,7 +2207,7 @@ int nodeSystemRead(int pipeID,void* buffer){
 	}
 	
 	//check pipe type
-	if(!_pipes[pipeID].sID || _pipes[pipeID].type == NODE_PIPE_OUT)
+	if(!_pipes[pipeID].shmID || _pipes[pipeID].type == NODE_PIPE_OUT)
 		return NODE_ERROR_INVALID_ARGS;
 	
 	//read count
@@ -2370,7 +2370,7 @@ static int fileReadStrWithTimeOut(int fd,char* str,ssize_t size,uint32_t usec){
 	return readSize;
 }
 
-static int fileWrite(int fd,void* buf,ssize_t size){
+static int fileWrite(int fd,const void* buf,ssize_t size){
 	ssize_t writeCount;
 	ssize_t writeSize = 0;
 	
@@ -2386,11 +2386,11 @@ static int fileWrite(int fd,void* buf,ssize_t size){
 	return size;
 }
 
-static int fileWriteStr(int fd,char* str){
+static int fileWriteStr(int fd,const char* str){
 	ssize_t writeSize = 0;
 
 	do{
-		ssize_t res = read(fd,&str[writeSize],1);
+		ssize_t res = write(fd,&str[writeSize],1);
 		if(res == 1)
 			writeSize ++;
 		else if(res == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
