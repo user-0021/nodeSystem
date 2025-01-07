@@ -54,7 +54,6 @@ static int fileReadStrWithTimeOut(int fd,char* str,ssize_t size,uint32_t usec);
 static int fileWrite(   int fd,const void* buf,ssize_t size);
 static int fileWriteStr(int fd,const char* str);
 
-// #define NODE_SYSTEM_HOST
 #ifdef NODE_SYSTEM_HOST
 
 typedef struct{
@@ -64,7 +63,7 @@ typedef struct{
 	NODE_DATA_UNIT unit;
 	char* connectNode;
 	char* connectPipe;
-	int sID;
+	shm_key shm;
 }nodePipe;
 
 typedef struct{
@@ -81,7 +80,7 @@ static void nodeSystemLoop();
 static int nodeBegin(nodeData* node);
 static void nodeDeleate(nodeData* node);
 static int sendNodeEnv(int fd,nodeData* data);
-static int receiveNodeProperties(int fd,nodeData* node);
+static int receiveNodeProperties(nodeData* node);
 static int popenRWasNonBlock(const char const * command,int* fd);
 
 static void pipeAddNode();
@@ -231,9 +230,12 @@ int nodeSystemInit(uint8_t isNoLog){
 			int i;
 			for(i = 0;i < (*itr)->pipeCount;i++){
 				if((*itr)->pipes[i].type != NODE_PIPE_IN){
-					int res = shmctl((*itr)->pipes[i].sID,IPC_RMID,NULL);
+					int res = shmctl((*itr)->pipes[i].shm.shmId,IPC_RMID,NULL);
 					if(res < 0 && !systemSettingMemory->isNoLog)
 						fprintf(logFile,"%s:[%s]shmctl(IPC_RMID):%s\n",getRealTimeStr(),(*itr)->name,strerror(errno));
+					res = semctl((*itr)->pipes[i].shm.semId,IPC_RMID,0);
+					if(res < 0 && !systemSettingMemory->isNoLog)
+						fprintf(logFile,"%s:[%s]semctl(IPC_RMID):%s\n",getRealTimeStr(),(*itr)->name,strerror(errno));
 				}
 			}
 		}
@@ -829,9 +831,12 @@ static void nodeSystemLoop(){
 			int i;
 			for(i = 0;(*itr)->pipeCount;i++){
 				if((*itr)->pipes[i].type != NODE_PIPE_IN){
-					shmctl((*itr)->pipes[i].sID,IPC_RMID,NULL);
-					if(systemSettingMemory->isNoLog)
+					int res = shmctl((*itr)->pipes[i].shm.shmId,IPC_RMID,NULL);
+					if(res < 0 && !systemSettingMemory->isNoLog)
 						fprintf(logFile,"%s:[%s]shmctl(IPC_RMID):%s\n",getRealTimeStr(),(*itr)->name,strerror(errno));
+					res = semctl((*itr)->pipes[i].shm.semId,IPC_RMID,0);
+					if(res < 0 && !systemSettingMemory->isNoLog)
+						fprintf(logFile,"%s:[%s]semctl(IPC_RMID):%s\n",getRealTimeStr(),(*itr)->name,strerror(errno));
 				}
 			}
 
@@ -903,7 +908,7 @@ static void nodeSystemLoop(){
 		//set nonblocking
 		fcntl(fd[0] ,F_SETFL,fcntl(fd[0] ,F_GETFL) | O_NONBLOCK);
 
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fflush(logFile);
 	}else{
 		//timer
@@ -967,15 +972,16 @@ static int nodeBegin(nodeData* node){
 	int ret = fileReadWithTimeOut(node->fd[0],&header_buffer,sizeof(uint32_t),1);
 
 	if(ret == 0){
-		fprintf(logFile,"%s:[%s]Rloop\n",getRealTimeStr(),node->name);
+		if(!systemSettingMemory->isNoLog)
+			fprintf(logFile,"%s:[%s]Rloop\n",getRealTimeStr(),node->name);
 		return 1;
 	}
 	else if((ret != sizeof(uint32_t))){
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:[%s]Recive header sequence timeout\n",getRealTimeStr(),node->name);
 		return -1;
 	}else if(header_buffer != _node_begin_head){
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:[%s]Failed recive header\n",getRealTimeStr(),node->name);
 		return -2;
 	}
@@ -986,30 +992,42 @@ static int nodeBegin(nodeData* node){
 		if(node->pipes[i].type != NODE_PIPE_IN){
 			size_t memSize = NODE_DATA_UNIT_SIZE[node->pipes[i].unit] * node->pipes[i].length + 1;
 
-			int sId = shmget(IPC_PRIVATE, memSize,0666);
-			if(sId < 0){
-				if(systemSettingMemory->isNoLog)
+			//get share memory and sepoma
+			int semId = semget(IPC_PRIVATE, 1,0666);
+			int shmId = shmget(IPC_PRIVATE, memSize,0666);
+			if(semId < 0){
+				if(!systemSettingMemory->isNoLog)
+					fprintf(logFile,"%s:[%s.%s]failed semget() : %s\n",getRealTimeStr(),node->name,node->pipes[i].pipeName,strerror(errno));
+				return -1;
+			}else if(shmId < 0){
+				if(!systemSettingMemory->isNoLog)
 					fprintf(logFile,"%s:[%s.%s]failed shmget() : %s\n",getRealTimeStr(),node->name,node->pipes[i].pipeName,strerror(errno));
 				return -1;
 			}
 
 			
-			write(node->fd[1],&sId,sizeof(sId));
-			node->pipes[i].sID = sId;
+			fileWrite(node->fd[1],&semId,sizeof(semId));
+			fileWrite(node->fd[1],&shmId,sizeof(shmId));
+			node->pipes[i].shm.semId = semId;
+			node->pipes[i].shm.shmId = shmId;
 		}
 	}
+			fprintf(logFile,"%s:[%s]AFailed recive header\n",getRealTimeStr(),node->name);
+			fflush(logFile);
 
-	if((fileReadWithTimeOut(node->fd[0],&header_buffer,sizeof(uint32_t),1000) != sizeof(uint32_t))){
-		if(systemSettingMemory->isNoLog)
+	if((fileReadWithTimeOut(node->fd[0],&header_buffer,sizeof(uint32_t),1000000LL) != sizeof(uint32_t))){
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:[%s]Recive eof sequence timeout\n",getRealTimeStr(),node->name);
 		return -1;
 	}else if(header_buffer != _node_begin_eof){
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:[%s]failed recive eof\n",getRealTimeStr(),node->name);
 		return -2;
 	}
+			fprintf(logFile,"%s:[%s]AFailed recive header\n",getRealTimeStr(),node->name);
+			fflush(logFile);
 
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:[%s]node is activate\n",getRealTimeStr(),node->name);
 	return 0;
 }
@@ -1017,7 +1035,7 @@ static int nodeBegin(nodeData* node){
 static void nodeDeleate(nodeData* node){
 
 	//log
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:[%s]node is deleate\n",getRealTimeStr(),node->name);
 
 	//releace mem
@@ -1038,80 +1056,80 @@ static int sendNodeEnv(int fd,nodeData* data){
 }
 
 
-static int receiveNodeProperties(int fd,nodeData* node){
+static int receiveNodeProperties(nodeData* node){
 	char recvBuffer[1024];
 	
 	//receive header
-	if(fileReadWithTimeOut(fd,recvBuffer,sizeof(_node_init_head),1000) != sizeof(_node_init_head)){
-		if(systemSettingMemory->isNoLog)
+	if(fileReadWithTimeOut(node->fd[0],recvBuffer,sizeof(_node_init_head),1000000LL) != sizeof(_node_init_head)){
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:Header receive sequence time out\n",getRealTimeStr());
 		return -1;
 	}else if(((uint32_t*)recvBuffer)[0] != _node_init_head){
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:Received header is invalid\n",getRealTimeStr());
 		return -2;
 	}
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:Header receive succsee\n",getRealTimeStr());
 
 	//read system Env
-	fileWrite(fd,&systemSettingKey.shmId,sizeof(int));
-	fileWrite(fd,&systemSettingKey.semId,sizeof(int));
+	fileWrite(node->fd[1],&systemSettingKey.semId,sizeof(int));
+	fileWrite(node->fd[1],&systemSettingKey.shmId,sizeof(int));
 
 	//send path
 	char path[PATH_MAX];
 	sprintf(path,"%s/%s.txt",logFolder,node->name);
-	fileWriteStr(fd,path);
+	fileWriteStr(node->fd[1],path);
 
 	//receive pipe count
-	if(fileReadWithTimeOut(fd,recvBuffer,sizeof(uint16_t),1000) != sizeof(uint16_t)){
-		if(systemSettingMemory->isNoLog)
+	if(fileReadWithTimeOut(node->fd[0],recvBuffer,sizeof(uint16_t),1000000LL) != sizeof(uint16_t)){
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:Pipe count receive sequence time out\n",getRealTimeStr());
 		return -1;
 	}	
 	node->pipeCount = ((uint16_t*)recvBuffer)[0];
 	node->pipes = malloc(sizeof(nodePipe)*node->pipeCount);
 	memset(node->pipes,0,sizeof(nodePipe)*node->pipeCount);
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:Pipe count %d\n",getRealTimeStr(),(int)node->pipeCount);
 	
 	//receive pipe
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:Pipe receive sequence begin\n",getRealTimeStr());
 	uint16_t i;
 	for(i = 0;i < node->pipeCount;i++){
 		//type
-		if(fileReadWithTimeOut(fd,&node->pipes[i].type,sizeof(uint8_t),1000) != sizeof(uint8_t)){
-			if(systemSettingMemory->isNoLog)
+		if(fileReadWithTimeOut(node->fd[0],&node->pipes[i].type,sizeof(uint8_t),1000000LL) != sizeof(uint8_t)){
+			if(!systemSettingMemory->isNoLog)
 				fprintf(logFile,"%s:Pipe type receive sequence time out\n",getRealTimeStr());
 			return -1;
 		}	
 
 		//unit
-		if(fileReadWithTimeOut(fd,&node->pipes[i].unit,sizeof(uint8_t),1000) != sizeof(uint8_t)){
-			if(systemSettingMemory->isNoLog)
+		if(fileReadWithTimeOut(node->fd[0],&node->pipes[i].unit,sizeof(uint8_t),1000000LL) != sizeof(uint8_t)){
+			if(!systemSettingMemory->isNoLog)
 				fprintf(logFile,"%s:Pipe unit receive sequence time out\n",getRealTimeStr());
 			return -1;
 		}	
 		
 		//length
-		if(fileReadWithTimeOut(fd,&node->pipes[i].length,sizeof(uint16_t),1000) != sizeof(uint16_t)){
-			if(systemSettingMemory->isNoLog)
+		if(fileReadWithTimeOut(node->fd[0],&node->pipes[i].length,sizeof(uint16_t),1000000LL) != sizeof(uint16_t)){
+			if(!systemSettingMemory->isNoLog)
 				fprintf(logFile,"%s:Unit length receive sequence time out\n",getRealTimeStr());
 			return -1;
 		}	
 		
 		//name
-		uint32_t len = fileReadStrWithTimeOut(fd,recvBuffer,sizeof(recvBuffer),1000);
+		uint32_t len = fileReadStrWithTimeOut(node->fd[0],recvBuffer,sizeof(recvBuffer),1000000LL);
 		if(len == 0 || recvBuffer[len - 1] != '\0'){
-			if(systemSettingMemory->isNoLog)
+			if(!systemSettingMemory->isNoLog)
 				fprintf(logFile,"%s:Unit length receive sequence time out\n",getRealTimeStr());
 			return -1;
 		}
 		node->pipes[i].pipeName = malloc(len);
 		strcpy(node->pipes[i].pipeName,recvBuffer);
 	
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,	
 				"--------------------------------------\n"
 				"PipeName: %s\n"
@@ -1124,20 +1142,20 @@ static int receiveNodeProperties(int fd,nodeData* node){
 				NODE_DATA_UNIT_STR[node->pipes[i].unit],
 				node->pipes[i].length);
 	}
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:Pipe receive sequence end\n",getRealTimeStr());
 
 	//recive eof
-	if(fileReadWithTimeOut(fd,recvBuffer,sizeof(_node_init_eof),1000) != sizeof(_node_init_eof)){
-		if(systemSettingMemory->isNoLog)
+	if(fileReadWithTimeOut(node->fd[0],recvBuffer,sizeof(_node_init_eof),1000000LL) != sizeof(_node_init_eof)){
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:EOF receive sequence time out\n",getRealTimeStr());
 		return -1;
 	}else if(((uint32_t*)recvBuffer)[0] != _node_init_eof){
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:received EOF is invalid\n",getRealTimeStr());
 		return -2;
 	}
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		fprintf(logFile,"%s:Header EOF succsee\n",getRealTimeStr());
 
 	return 0;
@@ -1216,7 +1234,7 @@ static void pipeAddNode(){
 	//execute program
 	data->pid = popenRWasNonBlock(data->filePath,data->fd);
 	if(data->pid < 0){
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:[%s]%s\n",getRealTimeStr(),data->name,strerror(errno));
 		free(data);
 
@@ -1227,7 +1245,7 @@ static void pipeAddNode(){
 
 	
 	//load properties
-	if(receiveNodeProperties(data->fd[0],data)){
+	if(receiveNodeProperties(data)){
 		kill(data->pid,SIGTERM);
 		free(data);
 
@@ -1343,7 +1361,7 @@ static void pipeNodeConnect(){
 			int i;
 			for(i = 0;i < (*itr)->pipeCount;i++){
 				if(strcmp((*itr)->pipes[i].pipeName,outPipe) == 0){
-					outputMem = (*itr)->pipes[i].sID;
+					outputMem = (*itr)->pipes[i].shm.shmId;
 					out = &(*itr)->pipes[i];
 					break;
 				}
@@ -1362,7 +1380,7 @@ static void pipeNodeConnect(){
 		in->connectNode = node_out->name;
 		in->connectPipe = out->pipeName;
 
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:connect %s %s to %s %s\n",getRealTimeStr(),inNode,inPipe,outNode,outPipe);
 	}
 
@@ -1414,7 +1432,7 @@ static void pipeNodeDisConnect(){
 		in->connectNode = NULL;
 		in->connectPipe = NULL;
 
-		if(systemSettingMemory->isNoLog)
+		if(!systemSettingMemory->isNoLog)
 			fprintf(logFile,"%s:disconnect %s %s\n",getRealTimeStr(),inNode,inPipe);
 	}
 
@@ -1568,7 +1586,7 @@ static void pipeNodeSetConst(){
 			res = NODE_ERROR_INVALID_ARGS;
 		}else{
 			//cpy data
-			uint8_t* memory = shmat(pipe_const->sID,NULL,0);
+			uint8_t* memory = shmat(pipe_const->shm.shmId,NULL,0);
 			if(memory  > 0){
 				memory[0]++;
 				memcpy(memory+1,tmpBuffer,size*pipe_const->length);
@@ -1621,7 +1639,7 @@ static void pipeNodeGetConst(){
 		res = NODE_ERROR_NONE_SUCH_THAT;
 	}else if(pipe_const->type != NODE_PIPE_CONST){
 		res = NODE_ERROR_INVALID_ARGS;
-	}else if((memory = shmat(pipe_const->sID,NULL,0)) < 0){
+	}else if((memory = shmat(pipe_const->shm.shmId,NULL,0)) < 0){
 		res = NODE_ERROR_MEMORY;
 	}else{			
 		res = pipe_const->length;
@@ -1777,7 +1795,7 @@ static void pipeSave(){
 					fprintf(saveFile,"%s\n",(*itr)->pipes[i].pipeName);
 					
 					void* mem;
-					if((mem = shmat((*itr)->pipes[i].sID,NULL,SHM_RDONLY)) > 0){
+					if((mem = shmat((*itr)->pipes[i].shm.shmId,NULL,SHM_RDONLY)) > 0){
 						fprintf(saveFile,"%d\n",(*itr)->pipes[i].length*NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit]);
 						fwrite(mem+1,NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit],(*itr)->pipes[i].length,saveFile);
 						shmdt(mem);
@@ -1847,7 +1865,7 @@ static void pipeLoad(){
 			size = pipe_const->length;
 		
 		void* constMem;
-		if((constMem = shmat(pipe_const->sID,NULL,0)) <= 0){
+		if((constMem = shmat(pipe_const->shm.shmId,NULL,0)) <= 0){
 			res = NODE_ERROR_MEMORY;
 		}else{
 			((uint8_t*)constMem)[0]++;
@@ -1928,8 +1946,7 @@ static void pipeNodeGetPipeNameList(){
 #else
 
 typedef struct{
-	int shmID;
-	int semID;
+	shm_key shm;
 	void* memory;
 	char* pipeName;
 	uint8_t count;
@@ -1965,6 +1982,8 @@ int nodeSystemInit(){
 	fileRead(STDIN_FILENO,&systemSettingKey.shmId,sizeof(int));
 	fileRead(STDIN_FILENO,&systemSettingKey.semId,sizeof(int));
 	systemSettingKey.shmMap = shmat(systemSettingKey.shmId,NULL,SHM_RDONLY);
+	systemSettingMemory = malloc(sizeof(nodeSystemEnv));
+	memcpy(systemSettingMemory,systemSettingKey.shmMap,sizeof(nodeSystemEnv));
 
 	if(systemSettingKey.shmMap < 0)
 		return NODE_ERROR_MEMORY;
@@ -2073,14 +2092,14 @@ int nodeSystemBegine(){
 		//if pipe type is not PIPE_IN
 		if(_pipes[i].type != NODE_PIPE_IN){
 			//receive share memory
-			fileRead(STDIN_FILENO,&_pipes[i].shmID,sizeof(_pipes[i].shmID));
-			fileRead(STDIN_FILENO,&_pipes[i].semID,sizeof(_pipes[i].semID));
+			fileRead(STDIN_FILENO,&_pipes[i].shmId,sizeof(_pipes[i].shmId));
+			fileRead(STDIN_FILENO,&_pipes[i].semId,sizeof(_pipes[i].semId));
 			
 			//if pipe type is PIPE_CONST
 			if(_pipes[i].type == NODE_PIPE_CONST){
 				//attach share memory for write
 				void* initVal = _pipes[i].memory;
-				_pipes[i].memory = shmat(_pipes[i].shmID,NULL,0);
+				_pipes[i].memory = shmat(_pipes[i].shmId,NULL,0);
 
 				//if attach success
 				if(_pipes[i].memory > 0){
@@ -2096,12 +2115,12 @@ int nodeSystemBegine(){
 					}
 					//dettach and attach sheare memory for read 
 					shmdt(_pipes[i].memory);
-					_pipes[i].memory = shmat(_pipes[i].shmID,NULL,SHM_RDONLY);
+					_pipes[i].memory = shmat(_pipes[i].shmId,NULL,SHM_RDONLY);
 				}
 			}
 			else{
 				//attach share memory for write
-				_pipes[i].memory = shmat(_pipes[i].shmID,NULL,0);
+				_pipes[i].memory = shmat(_pipes[i].shmId,NULL,0);
 			}
 
 			//if failed shmat
@@ -2132,7 +2151,7 @@ int nodeSystemLoop(){
 		//set blocking
 		fcntl(STDIN_FILENO ,F_SETFL,fcntl(STDIN_FILENO ,F_GETFL) & (~O_NONBLOCK));
 
-		if(_pipes[pipeId].shmID != 0){
+		if(_pipes[pipeId].shmId != 0){
 			if(shmdt(_pipes[pipeId].memory) < 0){
 				char msg[4096];
 				sprintf(msg,"Pipe[%s] failed shmdt():%s",_pipes[pipeId].pipeName,strerror(errno));
@@ -2141,10 +2160,10 @@ int nodeSystemLoop(){
 		}
 
 		_pipes[pipeId].count = 0;
-		fileRead(STDIN_FILENO,&_pipes[pipeId].shmID,sizeof(_pipes[pipeId].shmID));
-		fileRead(STDIN_FILENO,&_pipes[pipeId].semID,sizeof(_pipes[pipeId].semID));
-		if(_pipes[pipeId].shmID != 0){			
-			_pipes[pipeId].memory = shmat(_pipes[pipeId].shmID,NULL,SHM_RDONLY);
+		fileRead(STDIN_FILENO,&_pipes[pipeId].shmId,sizeof(_pipes[pipeId].shmId));
+		fileRead(STDIN_FILENO,&_pipes[pipeId].semId,sizeof(_pipes[pipeId].semId));
+		if(_pipes[pipeId].shmId != 0){			
+			_pipes[pipeId].memory = shmat(_pipes[pipeId].shmId,NULL,SHM_RDONLY);
 
 			char msg[4096];
 			sprintf(msg,"Pipe[%s] pipe connected",_pipes[pipeId].pipeName);
@@ -2171,7 +2190,7 @@ void nodeSystemDebugLog(char* const str){
 	}
 
 	//check log flag
-	if(systemSettingMemory->isNoLog)
+	if(!systemSettingMemory->isNoLog)
 		return;
 
 	char* time = getRealTimeStr();
@@ -2207,7 +2226,7 @@ int nodeSystemRead(int pipeID,void* buffer){
 	}
 	
 	//check pipe type
-	if(!_pipes[pipeID].shmID || _pipes[pipeID].type == NODE_PIPE_OUT)
+	if(!_pipes[pipeID].shmId || _pipes[pipeID].type == NODE_PIPE_OUT)
 		return NODE_ERROR_INVALID_ARGS;
 	
 	//read count
