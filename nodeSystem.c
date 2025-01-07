@@ -1,5 +1,4 @@
 #include "nodeSystem.h"
-#include <linear_list.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -16,7 +15,9 @@
 #include <errno.h>
 #include <time.h>
 #include <stdarg.h>
-
+#ifdef NODE_SYSTEM_HOST
+#include <linear_list.h>
+#endif
 
 //share memory struct
 typedef struct
