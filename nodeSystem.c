@@ -2030,13 +2030,13 @@ void nodeSystemDebugLog(char* const str){
 int nodeStstemSetDebugMode(NODE_DEBUG_MODE mode){
 	//check system state
 	if(_nodeSystemIsActive){
-		return NODE_ERROR_BAD_STATUS;
+		return -1;
 	}
 
 	//change mode
 	_dMode = mode;
 
-	return NODE_SUCCESS;
+	return 0;
 }
 
 int nodeSystemRead(int pipeID,void* buffer){
@@ -2069,7 +2069,7 @@ int nodeSystemRead(int pipeID,void* buffer){
 int nodeSystemWrite(int pipeID,void* const buffer){
 	//check system state
 	if(_nodeSystemIsActive != 2){
-		return NODE_ERROR_BAD_STATUS;
+		return -1;
 	}
 	
 	//check pipe type
@@ -2102,7 +2102,7 @@ int nodeSystemWait(){
 		char errorMsg[1024];
 		sprintf(errorMsg,"%s:%s",__func__,strerror(errno));
 		nodeSystemDebugLog(errorMsg);
-		return NODE_ERROR_FORK;
+		return -1;
 	}
 
 	if(pid != 0){
