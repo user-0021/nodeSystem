@@ -77,16 +77,6 @@ static const uint16_t NODE_DATA_UNIT_SIZE[13] = {
 	sizeof(double)
 };
 
-#define NODE_SUCCESS 0
-#define NODE_ERROR_ALREADY -1
-#define NODE_ERROR_NONE_SUCH_THAT -4
-#define NODE_ERROR_INVALID_ARGS -5
-#define NODE_ERROR_MEMORY -6
-#define NODE_ERROR_BAD_STATUS -7
-#define NODE_ERROR_LIMIT -8
-#define NODE_ERROR_FORK -9
-#define NODE_ERROR_FOPEN -10
-
 #ifdef NODE_SYSTEM_HOST
 int nodeSystemInit(uint8_t isNoLog);
 int nodeSystemAddNode(char* path,char** args);
