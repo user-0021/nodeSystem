@@ -1836,7 +1836,7 @@ int nodeSystemInit(){
 	if(!systemSettingMemory->isNoLog){
 		logFile = fopen(tmp,"w");
 		if(logFile == NULL){
-			return NODE_ERROR_FOPEN ;
+			return -1;
 		}
 	}
 
@@ -1858,7 +1858,7 @@ int nodeSystemInit(){
 	//Set state
 	_nodeSystemIsActive = 1;
 
-	return NODE_SUCCESS;
+	return 0;
 }
 
 int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,const void* buff){
@@ -1898,14 +1898,14 @@ int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT un
 	if(!_pipes){
 		_pipes = tmp;
 		free(pipe.pipeName);
-		return NODE_ERROR_MEMORY;
+		return -1;
 	}
 	_pipes[_pipe_count] = pipe;
 
 	//Set init value
 	if(type == NODE_PIPE_CONST && buff){
-		_pipes[_pipe_count].memory = malloc(NODE_DATA_UNIT_SIZE[unit]*arrayLength);
-		memcpy(_pipes[_pipe_count].memory,buff,NODE_DATA_UNIT_SIZE[unit]*arrayLength);
+		_pipes[_pipe_count].shm.shmMap = malloc(NODE_DATA_UNIT_SIZE[unit]*arrayLength);
+		memcpy(_pipes[_pipe_count].shm.shmMap,buff,NODE_DATA_UNIT_SIZE[unit]*arrayLength);
 	}
 
 	return _pipe_count++;
@@ -1914,7 +1914,7 @@ int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT un
 int nodeSystemBegine(){
 	//check system state
 	if(_nodeSystemIsActive != 1){
-		return NODE_ERROR_BAD_STATUS;
+		return -1;
 	}
 
 	//send header
@@ -1926,13 +1926,13 @@ int nodeSystemBegine(){
 		//if pipe type is not PIPE_IN
 		if(_pipes[i].type != NODE_PIPE_IN){
 			//receive share memory
-			fileRead(STDIN_FILENO,&_pipes[i].semId,sizeof(_pipes[i].semId));
-			fileRead(STDIN_FILENO,&_pipes[i].shmId,sizeof(_pipes[i].shmId));
+			fileRead(STDIN_FILENO,&_pipes[i].shm.semId,sizeof(_pipes[i].shm.semId));
+			fileRead(STDIN_FILENO,&_pipes[i].shm.shmId,sizeof(_pipes[i].shm.shmId));
 			
 			//if pipe type is PIPE_CONST
 			if(_pipes[i].type == NODE_PIPE_CONST){
 				//attach share memory for write
-				void* initVal = _pipes[i].memory;
+				void* initVal = _pipes[i].shm.shmMap;
 
 				//if attach success
 				if(shareMemoryOpen(&_pipes[i].shm,0) != 0){
@@ -1988,8 +1988,8 @@ int nodeSystemLoop(){
 		}
 
 		_pipes[pipeId].count = 0;
-		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.semId,sizeof(_pipes[pipeId].semId));
-		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shmId));
+		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.semId,sizeof(_pipes[pipeId].shm.semId));
+		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shm.shmId));
 		if(_pipes[pipeId].shmId != 0){			
 			shareMemoryOpen(&_pipes[pipeId].shm,SHM_RDONLY);
 
