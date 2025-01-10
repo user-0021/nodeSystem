@@ -1888,7 +1888,7 @@ int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT un
 	pipe.length = arrayLength;
 	pipe.pipeName = malloc(strlen(pipeName)+1);
 	if(!pipe.pipeName){
-		return NODE_ERROR_MEMORY;
+		return -1;
 	}
 	strcpy(pipe.pipeName,pipeName);
 
@@ -1947,7 +1947,7 @@ int nodeSystemBegine(){
 						free(initVal);
 					}
 					//dettach and attach sheare memory for read 
-					shareMemoryClose(&_pipes[i].shm.shmMap);
+					shareMemoryClose(&_pipes[i].shm);
 					shareMemoryOpen(&_pipes[i].shm,SHM_RDONLY);
 				}
 			}
@@ -1990,7 +1990,7 @@ int nodeSystemLoop(){
 		_pipes[pipeId].count = 0;
 		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.semId,sizeof(_pipes[pipeId].shm.semId));
 		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shm.shmId));
-		if(_pipes[pipeId].shmId != 0){			
+		if(_pipes[pipeId].shm.shmId != 0){			
 			shareMemoryOpen(&_pipes[pipeId].shm,SHM_RDONLY);
 
 			debugPrintf("%s(): [%s]: Pipe connected",__func__,_pipes[pipeId].pipeName);
@@ -2046,7 +2046,7 @@ int nodeSystemRead(int pipeID,void* buffer){
 	}
 	
 	//check pipe type
-	if(!_pipes[pipeID].shmId || _pipes[pipeID].type == NODE_PIPE_OUT)
+	if((_pipes[pipeID].shm.shmMap == NULL) || _pipes[pipeID].type == NODE_PIPE_OUT)
 		return -1;
 	
 	shareMemoryLock(&_pipes[pipeID].shm);
@@ -2092,7 +2092,7 @@ int nodeSystemWrite(int pipeID,void* const buffer){
 int nodeSystemWait(){
 	//check system state
 	if(_nodeSystemIsActive != 2){
-		return NODE_ERROR_BAD_STATUS;
+		return -1;
 	}
 
 	int pid = fork();	
