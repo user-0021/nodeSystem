@@ -1255,8 +1255,8 @@ static void pipeNodeConnect(){
 		res = -1;
 	}else{
 		fileWrite(node_in->fd[1],&pipe_in,sizeof(pipe_in));
-		fileWrite(node_in->fd[1],&outputMem->shmId,sizeof(outputMem->shmId));
 		fileWrite(node_in->fd[1],&outputMem->semId,sizeof(outputMem->semId));
+		fileWrite(node_in->fd[1],&outputMem->shmId,sizeof(outputMem->shmId));
 		in->connectNode = node_out->name;
 		in->connectPipe = out->pipeName;
 
@@ -1306,8 +1306,8 @@ static void pipeNodeDisConnect(){
 		res = -1;
 	}else{
 		fileWrite(node_in->fd[1],&pipe_in,sizeof(pipe_in));
-		fileWrite(node_in->fd[1],&outputMem.shmId,sizeof(outputMem.shmId));
 		fileWrite(node_in->fd[1],&outputMem.semId,sizeof(outputMem.semId));
+		fileWrite(node_in->fd[1],&outputMem.shmId,sizeof(outputMem.shmId));
 		in->connectNode = NULL;
 		in->connectPipe = NULL;
 
@@ -1497,7 +1497,7 @@ static void pipeNodeGetConst(){
 	}else if(pipe_const->type != NODE_PIPE_CONST){
 		debugPrintf("%s(): Pipe type is invalid",__func__);
 		res = -1;
-	}else if(shareMemoryOpen(&pipe_const->shm,IPC_RMID) != 0){
+	}else if(shareMemoryOpen(&pipe_const->shm,SHM_RDONLY) != 0){
 		debugPrintf("%s(): Failed open shared memory",__func__);
 		res = -1;
 	}else{			
@@ -1811,11 +1811,13 @@ int nodeSystemInit(){
 	fileWrite(STDOUT_FILENO,&_node_init_head,sizeof(_node_init_head));
 
 	//read system Env
-	fileRead(STDIN_FILENO,&systemSettingKey.shmId,sizeof(int));
 	fileRead(STDIN_FILENO,&systemSettingKey.semId,sizeof(int));
-	systemSettingKey.shmMap = shmat(systemSettingKey.shmId,NULL,SHM_RDONLY);
+	fileRead(STDIN_FILENO,&systemSettingKey.shmId,sizeof(int));
+	shareMemoryOpen(&systemSettingKey,SHM_RDONLY);
 	systemSettingMemory = malloc(sizeof(nodeSystemEnv));
+	shareMemoryLock(&systemSettingKey);
 	memcpy(systemSettingMemory,systemSettingKey.shmMap,sizeof(nodeSystemEnv));
+	shareMemoryUnLock(&systemSettingKey);
 
 	if(systemSettingKey.shmMap < 0)
 		return -1;
@@ -1924,15 +1926,13 @@ int nodeSystemBegine(){
 		//if pipe type is not PIPE_IN
 		if(_pipes[i].type != NODE_PIPE_IN){
 			//receive share memory
-			fileRead(STDIN_FILENO,&_pipes[i].shmId,sizeof(_pipes[i].shmId));
 			fileRead(STDIN_FILENO,&_pipes[i].semId,sizeof(_pipes[i].semId));
+			fileRead(STDIN_FILENO,&_pipes[i].shmId,sizeof(_pipes[i].shmId));
 			
 			//if pipe type is PIPE_CONST
 			if(_pipes[i].type == NODE_PIPE_CONST){
 				//attach share memory for write
 				void* initVal = _pipes[i].memory;
-				_pipes[i].shm.shmId = shmat(_pipes[i].shmId,NULL,0);
-				_pipes[i].shm.semId = shmat(_pipes[i].semId,NULL,0);
 
 				//if attach success
 				if(shareMemoryOpen(&_pipes[i].shm,0) != 0){
@@ -1948,7 +1948,7 @@ int nodeSystemBegine(){
 					}
 					//dettach and attach sheare memory for read 
 					shareMemoryClose(&_pipes[i].shm.shmMap);
-					shareMemoryOpen(&_pipes[i].shm,IPC_RMID);
+					shareMemoryOpen(&_pipes[i].shm,SHM_RDONLY);
 				}
 			}
 			else{
@@ -1988,10 +1988,10 @@ int nodeSystemLoop(){
 		}
 
 		_pipes[pipeId].count = 0;
-		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shmId));
 		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.semId,sizeof(_pipes[pipeId].semId));
+		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shmId));
 		if(_pipes[pipeId].shmId != 0){			
-			shareMemoryOpen(&_pipes[pipeId].shm,IPC_RMID);
+			shareMemoryOpen(&_pipes[pipeId].shm,SHM_RDONLY);
 
 			debugPrintf("%s(): [%s]: Pipe connected",__func__,_pipes[pipeId].pipeName);
 		}else{
