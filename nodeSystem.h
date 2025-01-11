@@ -88,6 +88,8 @@ int nodeSystemSave(char* const path);
 int nodeSystemLoad(char* const path);
 void nodeSystemTimerRun();
 void nodeSystemTimerStop();
+void nodeSystemTimerSet(long period);
+void nodeSystemTimerGet();
 char** nodeSystemGetConst(char* const constNode,char* const constPipe,int* retCode);
 char** nodeSystemGetNodeNameList(int* counts);
 char** nodeSystemGetPipeNameList(char* nodeName,int* counts);

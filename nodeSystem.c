@@ -34,7 +34,7 @@ typedef struct
 typedef struct{
 	uint8_t isNoLog;
 	time_t timeOffset;
-	time_t period;
+	long period;
 } nodeSystemEnv;
 
 
@@ -82,7 +82,9 @@ enum _pipeHead{
 	PIPE_SAVE = 8,
 	PIPE_LOAD = 9,
 	PIPE_TIMER_RUN = 10,
-	PIPE_TIMER_STOP = 11
+	PIPE_TIMER_STOP = 11,
+	PIPE_TIMER_SET = 12,
+	PIPE_TIMER_GET = 13
 };
 
 typedef struct{
@@ -126,6 +128,8 @@ static void pipeSave();
 static void pipeLoad();
 static void pipeTimerRun();
 static void pipeTimerStop();
+static void pipeTimerSet();
+static void pipeTimerGet();
 static void pipeGetNodeNameList();
 static void pipeGetPipeNameList();
 
@@ -142,7 +146,9 @@ static const node_op opTable[] = {
 	{.op=PIPE_SAVE				,.func=pipeSave},
 	{.op=PIPE_LOAD				,.func=pipeLoad},
 	{.op=PIPE_TIMER_RUN			,.func=pipeTimerRun},
-	{.op=PIPE_TIMER_STOP		,.func=pipeTimerStop}
+	{.op=PIPE_TIMER_STOP		,.func=pipeTimerStop},
+	{.op=PIPE_TIMER_SET			,.func=pipeTimerSet},
+	{.op=PIPE_TIMER_GET			,.func=pipeTimerGet}
 };
 
 //const value
@@ -152,6 +158,7 @@ static const char logRootPath[] = "./Logs";
 static int pid;
 static int fd[2];
 static char* logFolder;
+static long timerCounter;
 static uint8_t isTimerRunning = 0;
 static nodeData** activeNodeList = NULL;
 static nodeData** inactiveNodeList = NULL;
@@ -247,7 +254,7 @@ int nodeSystemInit(uint8_t isNoLog){
 				exit(-1);
 			}
 
-			debugPrintf("%s(): nodeSystem is activate.\n",__func__);
+			debugPrintf("%s(): nodeSystem is activate.",__func__);
 		}
 
 		//loop
@@ -274,11 +281,6 @@ int nodeSystemInit(uint8_t isNoLog){
 
 
 int nodeSystemAddNode(char* path,char** args){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 
 	//check argment
 	if(!path || !args){
@@ -316,11 +318,6 @@ int nodeSystemAddNode(char* path,char** args){
 
 
 void nodeSystemPrintNodeList(int* argc,char** args){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 
 	//send message head
 	uint8_t head = PIPE_NODE_LIST;
@@ -415,11 +412,6 @@ void nodeSystemPrintNodeList(int* argc,char** args){
 }
 
 int nodeSystemConnect(char* const inNode,char* const inPipe,char* const outNode,char* const outPipe){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//send message head
 	uint8_t head = PIPE_NODE_CONNECT;
@@ -441,11 +433,6 @@ int nodeSystemConnect(char* const inNode,char* const inPipe,char* const outNode,
 }
 
 int nodeSystemDisConnect(char* const inNode,char* const inPipe){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//send message head
 	uint8_t head = PIPE_NODE_DISCONNECT;
@@ -463,11 +450,6 @@ int nodeSystemDisConnect(char* const inNode,char* const inPipe){
 }
 
 int nodeSystemSetConst(char* const constNode,char* const constPipe,int valueCount,char** setValue){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//send message head
 	uint8_t head = PIPE_NODE_SET_CONST;
@@ -499,11 +481,6 @@ int nodeSystemSetConst(char* const constNode,char* const constPipe,int valueCoun
 }
 
 int nodeSystemSave(char* const path){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//send message head
 	uint8_t head = PIPE_SAVE;
@@ -520,11 +497,6 @@ int nodeSystemSave(char* const path){
 }
 
 int nodeSystemLoad(char* const path){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//open laod file
 	FILE* loadFile = fopen(path,"r");
@@ -672,11 +644,6 @@ int nodeSystemLoad(char* const path){
 }
 
 char** nodeSystemGetConst(char* const constNode,char* const constPipe,int* retCode){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//send message head
 	uint8_t head = PIPE_NODE_GET_CONST;
@@ -705,35 +672,48 @@ char** nodeSystemGetConst(char* const constNode,char* const constPipe,int* retCo
 }
 
 void nodeSystemTimerRun(){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 
+	fprintf(stdout,"Timer start\n");
+	
 	//send message head
 	uint8_t head = PIPE_TIMER_RUN;
 	fileWrite(fd[1],&head,sizeof(head));
 }
 
 void nodeSystemTimerStop(){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
+
+	fprintf(stdout,"Timer stop\n");
 	
 	//send message head
 	uint8_t head = PIPE_TIMER_STOP;
-	fileRead(fd[1],&head,sizeof(head));
+	fileWrite(fd[1],&head,sizeof(head));
+}
+
+void nodeSystemTimerSet(long period){
+	fprintf(stdout,"Timer period set to %ldms\n",period);
+
+	//send message head
+	uint8_t head = PIPE_TIMER_SET;
+	fileWrite(fd[1],&head,sizeof(head));
+	
+	//send period
+	fileWrite(fd[1],&period,sizeof(period));
+}
+
+void nodeSystemTimerGet(){
+	long period;
+
+	//send message head
+	uint8_t head = PIPE_TIMER_GET;
+	fileWrite(fd[1],&head,sizeof(head));
+
+	//receive period
+	fileRead(fd[0],&period,sizeof(period));
+
+	fprintf(stdout,"Timer period is %ldms\n",period);
 }
 
 char** nodeSystemGetNodeNameList(int* counts){
-	//check system state
-	if(kill(pid,0)){
-		debugPrintf("%s(): node system terminated",__func__);
-		exit(1);
-	}
 	
 	//send message head
 	uint8_t head = PIPE_GET_NODE_NAME_LIST;
@@ -798,6 +778,7 @@ static void nodeSystemLoop(){
 			nodeDeleate(*itr);
 			//deleate from list
 			LINEAR_LIST_ERASE(itr);
+			break;
 		}
 	}
 
@@ -809,6 +790,19 @@ static void nodeSystemLoop(){
 			nodeDeleate(*itr);
 			//deleate from list
 			LINEAR_LIST_ERASE(itr);
+		}
+	}
+
+	//wake up timer
+	if(isTimerRunning){
+		timerCounter++;
+		if(timerCounter == systemSettingMemory.period){
+			timerCounter = 0;
+			
+			//wakeup
+			LINEAR_LIST_FOREACH(activeNodeList,itr){
+				signal((*itr)->pid,SIGCONT);
+			}
 		}
 	}
 
@@ -917,7 +911,7 @@ static int nodeBegin(nodeData* node){
 
 	//receive eof
 	ret = fileReadWithTimeOut(node->fd[0],&header_buffer,sizeof(header_buffer),1000000LL);
-	if((ret != sizeof(header_buffer)) || (header_buffer != _node_begin_head)){
+	if((ret != sizeof(header_buffer)) || (header_buffer != _node_begin_eof)){
 		debugPrintf("%s(): [%s]: Failed recive eof",__func__,node->name);
 		return -1;
 	}else if(header_buffer != _node_begin_eof){
@@ -952,7 +946,8 @@ static void nodeDeleate(nodeData* node){
 	
 	//free
 	free(node->pipes);
-	free(node->name); 
+	if((node->name < node->filePath) || (node->name > (node->filePath+strlen(node->filePath))))
+		free(node->name); 
 	free(node->filePath); 
 	free(node);
 
@@ -964,7 +959,7 @@ static int receiveNodeProperties(nodeData* node){
 	//receive header
 	int res = fileReadWithTimeOut(node->fd[0],recvBuffer,sizeof(_node_init_head),1000000LL);
 	if((res != sizeof(_node_init_head))|| ((typeof(_node_init_head)*)recvBuffer)[0] != _node_init_head){
-		fprintf(logFile,"%s(): Received header is invalid",__func__);
+		debugPrintf("%s(): Received header is invalid",__func__);
 		return -1;
 	}
 
@@ -979,7 +974,7 @@ static int receiveNodeProperties(nodeData* node){
 
 	//receive pipe count
 	if(fileReadWithTimeOut(node->fd[0],recvBuffer,sizeof(uint16_t),1000000LL) != sizeof(uint16_t)){
-		fprintf(logFile,"%s(): Failed receive pipe count",__func__);
+		debugPrintf("%s(): Failed receive pipe count",__func__);
 		return -1;
 	}	
 
@@ -1073,7 +1068,7 @@ static void pipeAddNode(){
 		if(newPtr != NULL)
 			args[i] = newPtr;
 	}
-
+	
 	//do args
 	for(i = 0;i < (argsCount-1);i++){
 		if(strcmp(args[i],"-name") == 0){
@@ -1108,8 +1103,9 @@ static void pipeAddNode(){
 		debugPrintf("%s(): name conflict",__func__);
 
 		//free
+		if((data->name < data->filePath) || (data->name > (data->filePath+strlen(data->filePath))))
+			free(data->name);
 		free(data->filePath);
-		free(data->name);
 		free(data);
 
 		int res = -1;
@@ -1123,8 +1119,9 @@ static void pipeAddNode(){
 		debugPrintf("%s(): Failed execute file",__func__);
 		
 		//free
+		if((data->name < data->filePath) || (data->name > (data->filePath+strlen(data->filePath))))
+			free(data->name);
 		free(data->filePath);
-		free(data->name);
 		free(data);
 
 		int res = -1;
@@ -1136,10 +1133,10 @@ static void pipeAddNode(){
 	//load properties
 	if(receiveNodeProperties(data)){
 		kill(data->pid,SIGTERM);
-		
 		//free
+		if((data->name < data->filePath) || (data->name > (data->filePath+strlen(data->filePath))))
+			free(data->name);
 		free(data->filePath);
-		free(data->name);
 		free(data);
 
 		int res = -1;
@@ -1149,6 +1146,7 @@ static void pipeAddNode(){
 	else
 		LINEAR_LIST_PUSH(inactiveNodeList,data);
 
+	debugPrintf("a");
 
 	int res = 0;
 	fileWrite(fd[1],&res,sizeof(res));	
@@ -1721,11 +1719,22 @@ static void pipeLoad(){
 }
 
 static void pipeTimerRun(){
+	timerCounter = 0;
 	isTimerRunning = 1;
 }
 
 static void pipeTimerStop(){
 	isTimerRunning = 0;
+}
+
+static void pipeTimerSet(){	
+	shareMemoryLock(&systemSettingKey);
+	fileRead(fd[0],&systemSettingMemory->period,sizeof(systemSettingMemory->period));
+	shareMemoryUnLock(&systemSettingKey);
+}
+
+static void pipeTimerGet(){
+	fileWrite(fd[1],&systemSettingMemory->period,sizeof(systemSettingMemory->period));
 }
 
 static void pipeGetNodeNameList(){
@@ -1955,7 +1964,7 @@ int nodeSystemBegine(){
 				//attach share memory for write
 				shareMemoryOpen(&_pipes[i].shm,0);
 			}
-
+			
 			//if failed shmat
 			if(_pipes[i].shm.shmMap == NULL){
 				return -1;
@@ -2095,31 +2104,7 @@ int nodeSystemWait(){
 		return -1;
 	}
 
-	int pid = fork();	
-
-	if(pid == -1){
-		//failed  fork
-		char errorMsg[1024];
-		sprintf(errorMsg,"%s:%s",__func__,strerror(errno));
-		nodeSystemDebugLog(errorMsg);
-		return -1;
-	}
-
-	if(pid != 0){
-		//parent
-		kill(_self,SIGTSTP);
-		kill(pid,SIGTERM);
-	}else{//child
-		//get parent
-		int p = getppid();
-		//sleep
-		while(kill(_parent,0))
-			sleep(10);
-		//kill if this process don't killed
-		kill(p,SIGTERM);
-		exit(0);
-	}
-
+	kill(_self,SIGTSTP);
 }
 
 #endif
@@ -2274,6 +2259,13 @@ static int shareMemoryGenerate(size_t size,shm_key* shm){
 		debugPrintf("%s(): semget(): %s",__func__,strerror(errno));
 		return -1;
 	}
+
+	//set sem
+	if(semctl(shm->semId,0,SETVAL,1) < 0){
+		debugPrintf("%s(): semctl(): %s",__func__,strerror(errno));
+		return -1;
+	}
+	
 
 	//set map
 	shm->shmMap = NULL;
