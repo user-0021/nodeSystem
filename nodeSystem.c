@@ -158,10 +158,9 @@ static const char logRootPath[] = "./Logs";
 static int pid;
 static int fd[2];
 static char* logFolder;
-static long timerCounter;
-static uint8_t isTimerRunning = 0;
 static nodeData** activeNodeList = NULL;
 static nodeData** inactiveNodeList = NULL;
+static shm_key wakeupNodeArray;
 
 int nodeSystemInit(uint8_t isNoLog){
 	//set logfile
@@ -241,6 +240,39 @@ int nodeSystemInit(uint8_t isNoLog){
 		//init list
 		activeNodeList = LINEAR_LIST_CREATE(nodeData*);
 		inactiveNodeList = LINEAR_LIST_CREATE(nodeData*);
+
+		//fork timer thread
+		shareMemoryGenerate(sizeof(int)*4096,&wakeupNodeArray);
+		shareMemoryOpen(&wakeupNodeArray,0);
+		memset(wakeupNodeArray.shmMap,0,sizeof(int)*4096);
+		pid = fork();
+		if(pid == 0){
+			pid = getppid();
+			struct timespec interval = {};
+			int* pidList = wakeupNodeArray.shmMap;
+		
+			while(kill(pid,0) == 0){
+				interval.tv_sec = (systemSettingMemory->period * 1000000LL)/1000000000LL;
+				interval.tv_nsec = (systemSettingMemory->period * 1000000LL)%1000000000LL;
+
+				shareMemoryLock(&wakeupNodeArray);
+				if(pidList[0]){
+					int i;
+					for(i = 1;pidList[i] != 0;i++){
+						kill(pidList[i],SIGCONT);
+					}
+					shareMemoryUnLock(&wakeupNodeArray);
+					nanosleep(&interval,NULL);
+				}else{
+					shareMemoryUnLock(&wakeupNodeArray);
+					nanosleep(&interval,NULL);
+				}
+			}
+			shareMemoryDeleate(&wakeupNodeArray);
+			exit(0);
+		}else if(pid < 0){
+			exit(1);
+		}
 
 		//set log file
 		logFile = NULL;
@@ -771,6 +803,14 @@ static void nodeSystemLoop(){
 			nodeData* data = *itr;
 			LINEAR_LIST_ERASE(itr);
 			LINEAR_LIST_PUSH(activeNodeList,data);
+
+			int i;
+			int* pidList = wakeupNodeArray.shmMap;
+			for(i = 1;pidList[i] != 0;i++){
+			}
+			shareMemoryLock(&wakeupNodeArray);
+			pidList[i] = (*itr)->pid;
+			shareMemoryUnLock(&wakeupNodeArray);
 		}else if(ret < 0){
 			//kill
 			kill((*itr)->pid,SIGTERM);
@@ -790,19 +830,6 @@ static void nodeSystemLoop(){
 			nodeDeleate(*itr);
 			//deleate from list
 			LINEAR_LIST_ERASE(itr);
-		}
-	}
-
-	//wake up timer
-	if(isTimerRunning){
-		timerCounter++;
-		if(timerCounter == systemSettingMemory.period){
-			timerCounter = 0;
-			
-			//wakeup
-			LINEAR_LIST_FOREACH(activeNodeList,itr){
-				signal((*itr)->pid,SIGCONT);
-			}
 		}
 	}
 
@@ -940,6 +967,21 @@ static void nodeDeleate(nodeData* node){
 			//deleate
 			if(shareMemoryDeleate(&node->pipes[i].shm) != 0){
 				debugPrintf("%s(): failed deleate memory.",__func__);
+			}
+		}
+	}
+
+	//remove from wakeup List
+	int  f;
+	int* pidList = wakeupNodeArray.shmMap;
+	for(i = 1,f = 0;pidList[i] != 0;i++){
+		if(f){
+			pidList[i - 1] = pidList[i];
+			pidList[i] = 0;
+		}else{
+			if(pidList[i] == node->pid){
+				pidList[i] = 0;
+				f = 1;
 			}
 		}
 	}
@@ -1719,12 +1761,15 @@ static void pipeLoad(){
 }
 
 static void pipeTimerRun(){
-	timerCounter = 0;
-	isTimerRunning = 1;
+	shareMemoryLock(&wakeupNodeArray);
+	((int*)wakeupNodeArray.shmMap)[0] = 1;
+	shareMemoryUnLock(&wakeupNodeArray);
 }
 
 static void pipeTimerStop(){
-	isTimerRunning = 0;
+	shareMemoryLock(&wakeupNodeArray);
+	((int*)wakeupNodeArray.shmMap)[0] = 0;
+	shareMemoryUnLock(&wakeupNodeArray);
 }
 
 static void pipeTimerSet(){	
