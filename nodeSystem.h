@@ -103,4 +103,5 @@ int nodeSystemRead(int pipeID,void* buffer);
 int nodeSystemWrite(int pipeID,void* const buffer);
 int nodeSystemAddPipe(char* const pipeName,NODE_PIPE_TYPE type,NODE_DATA_UNIT unit,uint16_t arrayLength,const void* buff);
 int nodeSystemWait();
+long nodeSystemGetPeriod();
 #endif

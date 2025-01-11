@@ -1482,7 +1482,7 @@ static void pipeNodeSetConst(){
 			res = -1;
 		}else{
 			//cpy data
-			if(shareMemoryOpen(&pipe_const->shm,0)  != 0){
+			if(shareMemoryOpen(&pipe_const->shm,0)  == 0){
 				shareMemoryLock(&pipe_const->shm);
 				((uint8_t*)pipe_const->shm.shmMap)[0]++;
 				memcpy(pipe_const->shm.shmMap+1,tmpBuffer,size*pipe_const->length);
@@ -2153,6 +2153,10 @@ int nodeSystemWait(){
 	}
 
 	kill(_self,SIGTSTP);
+}
+
+long nodeSystemGetPeriod(){
+	return systemSettingMemory->period;
 }
 
 #endif
