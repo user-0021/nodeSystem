@@ -2008,18 +2008,21 @@ int nodeSystemLoop(){
 		}
 	}
 
+	shareMemoryLock(&systemSettingKey);
+	memcpy(systemSettingMemory,systemSettingKey.shmMap,sizeof(*systemSettingMemory));
+	shareMemoryUnLock(&systemSettingKey);
 
 	return kill(_parent,0);
 }
 
 void nodeSystemDebugLog(char* const str){
 	//check system state
-	if(_nodeSystemIsActive != 1){
+	if(_nodeSystemIsActive < 1){
 		return;
 	}
 
 	//check log flag
-	if(!systemSettingMemory->isNoLog)
+	if(systemSettingMemory->isNoLog)
 		return;
 
 	char* time = getRealTimeStr();
