@@ -2155,6 +2155,10 @@ int nodeSystemWait(){
 	kill(_self,SIGTSTP);
 }
 
+long nodeSystemGetPeriod(){
+	return systemSettingMemory->period;
+}
+
 #endif
 
 
