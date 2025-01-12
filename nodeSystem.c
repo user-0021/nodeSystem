@@ -255,6 +255,7 @@ int nodeSystemInit(uint8_t isNoLog){
 		memset(wakeupNodeArray.shmMap,0,sizeof(int)*4096);
 		pid = fork();
 		if(pid == 0){
+			logFile = NULL;
 			pid = getppid();
 			struct timespec interval = {};
 			int* pidList = wakeupNodeArray.shmMap;
@@ -803,7 +804,7 @@ void nodeSystemExit(){
 	fileWrite(fd[1],&head,sizeof(head));
 
 	int res;
-	fileReadWithTimeOut(fd[1],&res,sizeof(res),500000LL);
+	fileReadWithTimeOut(fd[0],&res,sizeof(res),5000000LL);
 }
 
 static void nodeSystemLoop(){
@@ -858,6 +859,8 @@ static void nodeSystemLoop(){
 		}
 	}else{
 		//timer
+		static const struct timespec req = {.tv_sec = 0,.tv_nsec = 1000*1000};
+		nanosleep(&req,NULL);
 	}
 }
 
@@ -1682,7 +1685,7 @@ static void pipeSave(){
 					
 
 					void* mem;
-					if(shareMemoryOpen(&(*itr)->pipes[i].shm,0) != 0){
+					if(shareMemoryOpen(&(*itr)->pipes[i].shm,0) == 0){
 						fprintf(saveFile,"%d\n",(*itr)->pipes[i].length*NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit]);
 						fwrite((*itr)->pipes[i].shm.shmMap+1,NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit],(*itr)->pipes[i].length,saveFile);
 						shareMemoryClose(&(*itr)->pipes[i].shm);
@@ -1847,10 +1850,11 @@ static void pipeExit(){
 	}
 	
 	int res = 0;
-	fileWrite(fd[1],&res,sizeof(res));
 	//dleate mem
 	shareMemoryDeleate(&systemSettingKey);
 	shareMemoryDeleate(&wakeupNodeArray);
+
+	fileWrite(fd[1],&res,sizeof(res));
 	exit(0);
 }
 
