@@ -93,6 +93,7 @@ void nodeSystemTimerGet();
 char** nodeSystemGetConst(char* const constNode,char* const constPipe,int* retCode);
 char** nodeSystemGetNodeNameList(int* counts);
 char** nodeSystemGetPipeNameList(char* nodeName,int* counts);
+void nodeSystemExit();
 #else
 int nodeSystemLoop();
 int nodeSystemInit();

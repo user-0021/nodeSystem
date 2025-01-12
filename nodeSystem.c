@@ -84,7 +84,8 @@ enum _pipeHead{
 	PIPE_TIMER_RUN = 10,
 	PIPE_TIMER_STOP = 11,
 	PIPE_TIMER_SET = 12,
-	PIPE_TIMER_GET = 13
+	PIPE_TIMER_GET = 13,
+	PIPE_EXIT = 14
 };
 
 typedef struct{
@@ -132,6 +133,7 @@ static void pipeTimerSet();
 static void pipeTimerGet();
 static void pipeGetNodeNameList();
 static void pipeGetPipeNameList();
+static void pipeExit();
 
 //op list
 static const node_op opTable[] = {
@@ -148,7 +150,8 @@ static const node_op opTable[] = {
 	{.op=PIPE_TIMER_RUN			,.func=pipeTimerRun},
 	{.op=PIPE_TIMER_STOP		,.func=pipeTimerStop},
 	{.op=PIPE_TIMER_SET			,.func=pipeTimerSet},
-	{.op=PIPE_TIMER_GET			,.func=pipeTimerGet}
+	{.op=PIPE_TIMER_GET			,.func=pipeTimerGet},
+	{.op=PIPE_EXIT				,.func=pipeExit}
 };
 
 //const value
@@ -304,23 +307,8 @@ int nodeSystemInit(uint8_t isNoLog){
 			nodeSystemLoop();
 		}
 
-		
-
-		//remove mem
-		nodeData** itr;
-		LINEAR_LIST_FOREACH(activeNodeList,itr){
-			nodeDeleate(*itr);
-		}
-
-		//dleate mem
-		shareMemoryDeleate(&systemSettingKey);
-		
-
-		//close
-		if(logFile)
-			fclose(logFile);
-		
-		exit(0);
+		//exit 
+		pipeExit();
 	}
 
 	return 0;
@@ -809,6 +797,15 @@ char** nodeSystemGetPipeNameList(char* nodeName,int* counts){
 	return names;
 }
 
+void nodeSystemExit(){
+	//send message head
+	uint8_t head = PIPE_EXIT;
+	fileWrite(fd[1],&head,sizeof(head));
+
+	int res;
+	fileReadWithTimeOut(fd[1],&res,sizeof(res),500000LL);
+}
+
 static void nodeSystemLoop(){
 	//check inactive nodes
 	nodeData** itr;
@@ -995,7 +992,6 @@ static void nodeDeleate(nodeData* node){
 	}
 	
 	kill(node->pid,SIGINT);
-	kill(node->pid,SIGCONT);
 
 	//free
 	free(node->pipes);
@@ -1841,6 +1837,21 @@ static void pipeGetPipeNameList(){
 	//if node is not found
 	uint16_t zero = 0;
 	fileWrite(fd[1],&zero,sizeof(zero));
+}
+
+static void pipeExit(){
+	//deleate all node
+	nodeData** itr;
+	LINEAR_LIST_FOREACH(activeNodeList,itr){
+		nodeDeleate(*itr);
+	}
+	
+	int res = 0;
+	fileWrite(fd[1],&res,sizeof(res));
+	//dleate mem
+	shareMemoryDeleate(&systemSettingKey);
+	shareMemoryDeleate(&wakeupNodeArray);
+	exit(0);
 }
 
 #else
