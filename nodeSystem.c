@@ -255,10 +255,13 @@ int nodeSystemInit(uint8_t isNoLog){
 			pid = getppid();
 			struct timespec interval = {};
 			int* pidList = wakeupNodeArray.shmMap;
-		
+			shareMemoryOpen(&systemSettingKey,SHM_RDONLY);
 			while(kill(pid,0) == 0){
-				interval.tv_sec = (systemSettingMemory->period * 1000000LL)/1000000000LL;
-				interval.tv_nsec = (systemSettingMemory->period * 1000000LL)%1000000000LL;
+				shareMemoryLock(&systemSettingKey);
+				nodeSystemEnv* env = systemSettingKey.shmMap;
+				interval.tv_sec = (env->period * 1000000LL)/1000000000LL;
+				interval.tv_nsec = (env->period * 1000000LL)%1000000000LL;
+				shareMemoryUnLock(&systemSettingKey);
 
 				shareMemoryLock(&wakeupNodeArray);
 				if(pidList[0]){
@@ -273,6 +276,7 @@ int nodeSystemInit(uint8_t isNoLog){
 					nanosleep(&interval,NULL);
 				}
 			}
+			shareMemoryClose(&systemSettingKey);
 			shareMemoryDeleate(&wakeupNodeArray);
 			exit(0);
 		}else if(pid < 0){
@@ -1782,8 +1786,8 @@ static void pipeTimerSet(){
 	
 	//copy data
 	shareMemoryLock(&systemSettingKey);
-	memcpy(systemSettingKey.shmMap,systemSettingMemory,sizeof(*systemSettingMemory));
-	shareMemoryLock(&systemSettingKey);
+	memcpy(systemSettingKey.shmMap,systemSettingMemory,sizeof(nodeSystemEnv));
+	shareMemoryUnLock(&systemSettingKey);
 }
 
 static void pipeTimerGet(){
