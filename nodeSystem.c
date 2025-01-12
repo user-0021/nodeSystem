@@ -2069,10 +2069,11 @@ int nodeSystemLoop(){
 		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shm.shmId));
 		if(_pipes[pipeId].shm.shmId != 0){			
 			shareMemoryOpen(&_pipes[pipeId].shm,SHM_RDONLY);
-
-			debugPrintf("%s(): [%s]: Pipe connected",__func__,_pipes[pipeId].pipeName);
+			if(_dMode != NODE_DEBUG_CSV)
+				debugPrintf("%s(): [%s]: Pipe connected",__func__,_pipes[pipeId].pipeName);
 		}else{
-			debugPrintf("%s(): [%s]: Pipe dissconnect",__func__,_pipes[pipeId].pipeName);
+			if(_dMode != NODE_DEBUG_CSV)
+				debugPrintf("%s(): [%s]: Pipe dissconnect",__func__,_pipes[pipeId].pipeName);
 		}
 	}
 
@@ -2093,13 +2094,16 @@ void nodeSystemDebugLog(char* const str){
 	if(systemSettingMemory->isNoLog)
 		return;
 
-	char* time = getRealTimeStr();
-	size_t len = strlen(time);
-	fwrite(time,1,len,logFile);
+	//insert time
+	if(_dMode != NODE_DEBUG_CSV){
+		char* time = getRealTimeStr();
+		size_t len = strlen(time);
+		fwrite(time,1,len,logFile);
 
-	fwrite(":",1,1,logFile);
+		fwrite(":",1,1,logFile);
+	}
 
-	len = strlen(str);
+	size_t len = strlen(str);
 	fwrite(str,1,len,logFile);
 
 	fwrite("\n",1,1,logFile);
