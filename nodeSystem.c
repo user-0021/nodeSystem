@@ -34,7 +34,7 @@ typedef struct
 typedef struct{
 	uint8_t isNoLog;
 	time_t timeOffset;
-	long period;
+	double period;
 } nodeSystemEnv;
 
 
@@ -189,7 +189,7 @@ int nodeSystemInit(uint8_t isNoLog){
 
 	//set env data
 	systemSettingMemory->isNoLog = isNoLog;
-	systemSettingMemory->period = 1000;
+	systemSettingMemory->period = 1000.0;
 
 	//copy data
 	shareMemoryLock(&systemSettingKey);
@@ -263,8 +263,9 @@ int nodeSystemInit(uint8_t isNoLog){
 			while(kill(pid,0) == 0){
 				shareMemoryLock(&systemSettingKey);
 				nodeSystemEnv* env = systemSettingKey.shmMap;
-				interval.tv_sec = (env->period * 1000000LL)/1000000000LL;
-				interval.tv_nsec = (env->period * 1000000LL)%1000000000LL;
+				long nsec = env->period * 1000000LL;
+				interval.tv_sec = nsec/1000000000LL;
+				interval.tv_nsec = nsec%1000000000LL;
 				shareMemoryUnLock(&systemSettingKey);
 
 				shareMemoryLock(&wakeupNodeArray);
@@ -724,8 +725,8 @@ void nodeSystemTimerStop(){
 	fileWrite(fd[1],&head,sizeof(head));
 }
 
-void nodeSystemTimerSet(long period){
-	fprintf(stdout,"Timer period set to %ldms\n",period);
+void nodeSystemTimerSet(double period){
+	fprintf(stdout,"Timer period set to %lfms\n",period);
 
 	//send message head
 	uint8_t head = PIPE_TIMER_SET;
@@ -736,7 +737,7 @@ void nodeSystemTimerSet(long period){
 }
 
 void nodeSystemTimerGet(){
-	long period;
+	double period;
 
 	//send message head
 	uint8_t head = PIPE_TIMER_GET;
@@ -745,7 +746,7 @@ void nodeSystemTimerGet(){
 	//receive period
 	fileRead(fd[0],&period,sizeof(period));
 
-	fprintf(stdout,"Timer period is %ldms\n",period);
+	fprintf(stdout,"Timer period is %lfms\n",period);
 }
 
 char** nodeSystemGetNodeNameList(int* counts){
@@ -2189,7 +2190,7 @@ int nodeSystemWait(){
 	kill(_self,SIGTSTP);
 }
 
-long nodeSystemGetPeriod(){
+double nodeSystemGetPeriod(){
 	return systemSettingMemory->period;
 }
 
