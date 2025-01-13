@@ -34,7 +34,7 @@ typedef struct
 typedef struct{
 	uint8_t isNoLog;
 	time_t timeOffset;
-	long period;
+	double period;
 } nodeSystemEnv;
 
 
@@ -84,7 +84,8 @@ enum _pipeHead{
 	PIPE_TIMER_RUN = 10,
 	PIPE_TIMER_STOP = 11,
 	PIPE_TIMER_SET = 12,
-	PIPE_TIMER_GET = 13
+	PIPE_TIMER_GET = 13,
+	PIPE_EXIT = 14
 };
 
 typedef struct{
@@ -132,6 +133,7 @@ static void pipeTimerSet();
 static void pipeTimerGet();
 static void pipeGetNodeNameList();
 static void pipeGetPipeNameList();
+static void pipeExit();
 
 //op list
 static const node_op opTable[] = {
@@ -148,7 +150,8 @@ static const node_op opTable[] = {
 	{.op=PIPE_TIMER_RUN			,.func=pipeTimerRun},
 	{.op=PIPE_TIMER_STOP		,.func=pipeTimerStop},
 	{.op=PIPE_TIMER_SET			,.func=pipeTimerSet},
-	{.op=PIPE_TIMER_GET			,.func=pipeTimerGet}
+	{.op=PIPE_TIMER_GET			,.func=pipeTimerGet},
+	{.op=PIPE_EXIT				,.func=pipeExit}
 };
 
 //const value
@@ -176,7 +179,7 @@ int nodeSystemInit(uint8_t isNoLog){
 	//malloc global memory
 	CHECK(0,shareMemoryGenerate(sizeof(nodeSystemEnv),&systemSettingKey));
 	CHECK(0,shareMemoryOpen(&systemSettingKey,0));
-	systemSettingMemory = systemSettingKey.shmMap;
+	systemSettingMemory = malloc(sizeof(nodeSystemEnv));
 
 	//calc timezone
 	time_t t = time(NULL);
@@ -186,7 +189,12 @@ int nodeSystemInit(uint8_t isNoLog){
 
 	//set env data
 	systemSettingMemory->isNoLog = isNoLog;
-	systemSettingMemory->period = 1000;
+	systemSettingMemory->period = 1000.0;
+
+	//copy data
+	shareMemoryLock(&systemSettingKey);
+	memcpy(systemSettingKey.shmMap,systemSettingMemory,sizeof(*systemSettingMemory));
+	shareMemoryUnLock(&systemSettingKey);
 	
 	//create logDirPath
 	char logFilePath[PATH_MAX];
@@ -247,13 +255,18 @@ int nodeSystemInit(uint8_t isNoLog){
 		memset(wakeupNodeArray.shmMap,0,sizeof(int)*4096);
 		pid = fork();
 		if(pid == 0){
+			logFile = NULL;
 			pid = getppid();
 			struct timespec interval = {};
 			int* pidList = wakeupNodeArray.shmMap;
-		
+			shareMemoryOpen(&systemSettingKey,SHM_RDONLY);
 			while(kill(pid,0) == 0){
-				interval.tv_sec = (systemSettingMemory->period * 1000000LL)/1000000000LL;
-				interval.tv_nsec = (systemSettingMemory->period * 1000000LL)%1000000000LL;
+				shareMemoryLock(&systemSettingKey);
+				nodeSystemEnv* env = systemSettingKey.shmMap;
+				long nsec = env->period * 1000000LL;
+				interval.tv_sec = nsec/1000000000LL;
+				interval.tv_nsec = nsec%1000000000LL;
+				shareMemoryUnLock(&systemSettingKey);
 
 				shareMemoryLock(&wakeupNodeArray);
 				if(pidList[0]){
@@ -268,6 +281,7 @@ int nodeSystemInit(uint8_t isNoLog){
 					nanosleep(&interval,NULL);
 				}
 			}
+			shareMemoryClose(&systemSettingKey);
 			shareMemoryDeleate(&wakeupNodeArray);
 			exit(0);
 		}else if(pid < 0){
@@ -295,17 +309,8 @@ int nodeSystemInit(uint8_t isNoLog){
 			nodeSystemLoop();
 		}
 
-		//remove mem
-		nodeData** itr;
-		LINEAR_LIST_FOREACH(activeNodeList,itr){
-			nodeDeleate(*itr);
-		}
-
-		//close
-		if(logFile)
-			fclose(logFile);
-		
-		exit(0);
+		//exit 
+		pipeExit();
 	}
 
 	return 0;
@@ -641,7 +646,6 @@ int nodeSystemLoad(char* const path){
 		void* mem = malloc(size);
 		fread(mem,size,1,loadFile);
 
-
 		//print name and path
 		nodeName[strlen(nodeName)-1] = '\0';
 		pipeName[strlen(pipeName)-1] = '\0';
@@ -721,8 +725,8 @@ void nodeSystemTimerStop(){
 	fileWrite(fd[1],&head,sizeof(head));
 }
 
-void nodeSystemTimerSet(long period){
-	fprintf(stdout,"Timer period set to %ldms\n",period);
+void nodeSystemTimerSet(double period){
+	fprintf(stdout,"Timer period set to %lfms\n",period);
 
 	//send message head
 	uint8_t head = PIPE_TIMER_SET;
@@ -733,7 +737,7 @@ void nodeSystemTimerSet(long period){
 }
 
 void nodeSystemTimerGet(){
-	long period;
+	double period;
 
 	//send message head
 	uint8_t head = PIPE_TIMER_GET;
@@ -742,7 +746,7 @@ void nodeSystemTimerGet(){
 	//receive period
 	fileRead(fd[0],&period,sizeof(period));
 
-	fprintf(stdout,"Timer period is %ldms\n",period);
+	fprintf(stdout,"Timer period is %lfms\n",period);
 }
 
 char** nodeSystemGetNodeNameList(int* counts){
@@ -792,6 +796,15 @@ char** nodeSystemGetPipeNameList(char* nodeName,int* counts){
 
 	counts[0] = pipeCounts;
 	return names;
+}
+
+void nodeSystemExit(){
+	//send message head
+	uint8_t head = PIPE_EXIT;
+	fileWrite(fd[1],&head,sizeof(head));
+
+	int res;
+	fileReadWithTimeOut(fd[0],&res,sizeof(res),5000000LL);
 }
 
 static void nodeSystemLoop(){
@@ -958,12 +971,7 @@ static void nodeDeleate(nodeData* node){
 		free(node->pipes[i].pipeName);
 
 		//check type
-		if(node->pipes[i].type == NODE_PIPE_IN){
-			//close
-			if(shareMemoryClose(&node->pipes[i].shm) != 0){
-				debugPrintf("%s(): failed deleate memory.",__func__);
-			}
-		}else{
+		if(node->pipes[i].type != NODE_PIPE_IN){
 			//deleate
 			if(shareMemoryDeleate(&node->pipes[i].shm) != 0){
 				debugPrintf("%s(): failed deleate memory.",__func__);
@@ -986,6 +994,8 @@ static void nodeDeleate(nodeData* node){
 		}
 	}
 	
+	kill(node->pid,SIGINT);
+
 	//free
 	free(node->pipes);
 	if((node->name < node->filePath) || (node->name > (node->filePath+strlen(node->filePath))))
@@ -1187,8 +1197,6 @@ static void pipeAddNode(){
 	}
 	else
 		LINEAR_LIST_PUSH(inactiveNodeList,data);
-
-	debugPrintf("a");
 
 	int res = 0;
 	fileWrite(fd[1],&res,sizeof(res));	
@@ -1677,9 +1685,11 @@ static void pipeSave(){
 					
 
 					void* mem;
-					if(shareMemoryOpen(&(*itr)->pipes[i].shm,0) != 0){
+					if(shareMemoryOpen(&(*itr)->pipes[i].shm,0) == 0){
+						shareMemoryLock(&(*itr)->pipes[i].shm);
 						fprintf(saveFile,"%d\n",(*itr)->pipes[i].length*NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit]);
 						fwrite((*itr)->pipes[i].shm.shmMap+1,NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit],(*itr)->pipes[i].length,saveFile);
+						shareMemoryUnLock(&(*itr)->pipes[i].shm);
 						shareMemoryClose(&(*itr)->pipes[i].shm);
 					}else{
 						res = -1;
@@ -1740,15 +1750,17 @@ static void pipeLoad(){
 		res = -1;
 	}else{
 		//check size
-		if(size > pipe_const->length)
-			size = pipe_const->length;
+		if(size > (pipe_const->length * NODE_DATA_UNIT_SIZE[pipe_const->unit]))
+			size = (pipe_const->length * NODE_DATA_UNIT_SIZE[pipe_const->unit]);
 		
 		if(shareMemoryOpen(&pipe_const->shm,0) != 0){
 			debugPrintf("%s(): Failed open shared memory",__func__);
 			res = -1;
 		}else{
+			shareMemoryLock(&pipe_const->shm);
 			((uint8_t*)pipe_const->shm.shmMap)[0]++;
 			memcpy(pipe_const->shm.shmMap+1,mem,size);
+			shareMemoryUnLock(&pipe_const->shm);
 			shareMemoryClose(&pipe_const->shm);
 		}
 	}
@@ -1773,8 +1785,11 @@ static void pipeTimerStop(){
 }
 
 static void pipeTimerSet(){	
-	shareMemoryLock(&systemSettingKey);
 	fileRead(fd[0],&systemSettingMemory->period,sizeof(systemSettingMemory->period));
+	
+	//copy data
+	shareMemoryLock(&systemSettingKey);
+	memcpy(systemSettingKey.shmMap,systemSettingMemory,sizeof(nodeSystemEnv));
 	shareMemoryUnLock(&systemSettingKey);
 }
 
@@ -1829,6 +1844,22 @@ static void pipeGetPipeNameList(){
 	//if node is not found
 	uint16_t zero = 0;
 	fileWrite(fd[1],&zero,sizeof(zero));
+}
+
+static void pipeExit(){
+	//deleate all node
+	nodeData** itr;
+	LINEAR_LIST_FOREACH(activeNodeList,itr){
+		nodeDeleate(*itr);
+	}
+	
+	int res = 0;
+	//dleate mem
+	shareMemoryDeleate(&systemSettingKey);
+	shareMemoryDeleate(&wakeupNodeArray);
+
+	fileWrite(fd[1],&res,sizeof(res));
+	exit(0);
 }
 
 #else
@@ -2046,15 +2077,16 @@ int nodeSystemLoop(){
 		fileRead(STDIN_FILENO,&_pipes[pipeId].shm.shmId,sizeof(_pipes[pipeId].shm.shmId));
 		if(_pipes[pipeId].shm.shmId != 0){			
 			shareMemoryOpen(&_pipes[pipeId].shm,SHM_RDONLY);
-
-			debugPrintf("%s(): [%s]: Pipe connected",__func__,_pipes[pipeId].pipeName);
+			if(_dMode != NODE_DEBUG_CSV)
+				debugPrintf("%s(): [%s]: Pipe connected",__func__,_pipes[pipeId].pipeName);
 		}else{
-			debugPrintf("%s(): [%s]: Pipe dissconnect",__func__,_pipes[pipeId].pipeName);
+			if(_dMode != NODE_DEBUG_CSV)
+				debugPrintf("%s(): [%s]: Pipe dissconnect",__func__,_pipes[pipeId].pipeName);
 		}
 	}
 
 	shareMemoryLock(&systemSettingKey);
-	memcpy(systemSettingMemory,systemSettingKey.shmMap,sizeof(*systemSettingMemory));
+	memcpy(systemSettingMemory,systemSettingKey.shmMap,sizeof(nodeSystemEnv));
 	shareMemoryUnLock(&systemSettingKey);
 
 	return kill(_parent,0);
@@ -2070,13 +2102,16 @@ void nodeSystemDebugLog(char* const str){
 	if(systemSettingMemory->isNoLog)
 		return;
 
-	char* time = getRealTimeStr();
-	size_t len = strlen(time);
-	fwrite(time,1,len,logFile);
+	//insert time
+	if(_dMode != NODE_DEBUG_CSV){
+		char* time = getRealTimeStr();
+		size_t len = strlen(time);
+		fwrite(time,1,len,logFile);
 
-	fwrite(":",1,1,logFile);
+		fwrite(":",1,1,logFile);
+	}
 
-	len = strlen(str);
+	size_t len = strlen(str);
 	fwrite(str,1,len,logFile);
 
 	fwrite("\n",1,1,logFile);
@@ -2155,7 +2190,7 @@ int nodeSystemWait(){
 	kill(_self,SIGTSTP);
 }
 
-long nodeSystemGetPeriod(){
+double nodeSystemGetPeriod(){
 	return systemSettingMemory->period;
 }
 
@@ -2332,7 +2367,6 @@ static int shareMemoryDeleate(shm_key* shm){
 		return -1;
 	}
 
-	//close
 	if(shm->shmMap)
 		shareMemoryClose(shm);
 
@@ -2378,7 +2412,7 @@ static int shareMemoryClose(shm_key* shm){
 
 	//generate shm
 	if(shmdt(shm->shmMap) != 0){
-		debugPrintf("%s(): shmdt(): %s",__func__,strerror(errno));
+		debugPrintf("%s(): shmdt(): %p %s",__func__,shm->shmMap,strerror(errno));
 		return -1;
 	}
 
