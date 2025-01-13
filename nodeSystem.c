@@ -645,7 +645,6 @@ int nodeSystemLoad(char* const path){
 		void* mem = malloc(size);
 		fread(mem,size,1,loadFile);
 
-
 		//print name and path
 		nodeName[strlen(nodeName)-1] = '\0';
 		pipeName[strlen(pipeName)-1] = '\0';
@@ -1686,8 +1685,10 @@ static void pipeSave(){
 
 					void* mem;
 					if(shareMemoryOpen(&(*itr)->pipes[i].shm,0) == 0){
+						shareMemoryLock(&(*itr)->pipes[i].shm);
 						fprintf(saveFile,"%d\n",(*itr)->pipes[i].length*NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit]);
 						fwrite((*itr)->pipes[i].shm.shmMap+1,NODE_DATA_UNIT_SIZE[(*itr)->pipes[i].unit],(*itr)->pipes[i].length,saveFile);
+						shareMemoryUnLock(&(*itr)->pipes[i].shm);
 						shareMemoryClose(&(*itr)->pipes[i].shm);
 					}else{
 						res = -1;
@@ -1748,15 +1749,17 @@ static void pipeLoad(){
 		res = -1;
 	}else{
 		//check size
-		if(size > pipe_const->length)
-			size = pipe_const->length;
+		if(size > (pipe_const->length * NODE_DATA_UNIT_SIZE[pipe_const->unit]))
+			size = (pipe_const->length * NODE_DATA_UNIT_SIZE[pipe_const->unit]);
 		
 		if(shareMemoryOpen(&pipe_const->shm,0) != 0){
 			debugPrintf("%s(): Failed open shared memory",__func__);
 			res = -1;
 		}else{
+			shareMemoryLock(&pipe_const->shm);
 			((uint8_t*)pipe_const->shm.shmMap)[0]++;
 			memcpy(pipe_const->shm.shmMap+1,mem,size);
+			shareMemoryUnLock(&pipe_const->shm);
 			shareMemoryClose(&pipe_const->shm);
 		}
 	}
