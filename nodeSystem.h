@@ -90,6 +90,8 @@ void nodeSystemTimerRun();
 void nodeSystemTimerStop();
 void nodeSystemTimerSet(double period);
 void nodeSystemTimerGet();
+int nodeSystemKill(char* const killNode);
+int nodeSystemCheck(char* const path);
 char** nodeSystemGetConst(char* const constNode,char* const constPipe,int* retCode);
 char** nodeSystemGetNodeNameList(int* counts);
 char** nodeSystemGetPipeNameList(char* nodeName,int* counts);

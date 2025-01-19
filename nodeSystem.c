@@ -85,7 +85,9 @@ enum _pipeHead{
 	PIPE_TIMER_STOP = 11,
 	PIPE_TIMER_SET = 12,
 	PIPE_TIMER_GET = 13,
-	PIPE_EXIT = 14
+	PIPE_EXIT = 14,
+	PIPE_KILL = 15,
+	PIPE_CHECK_FILE = 16
 };
 
 typedef struct{
@@ -131,6 +133,8 @@ static void pipeTimerRun();
 static void pipeTimerStop();
 static void pipeTimerSet();
 static void pipeTimerGet();
+static void pipeKill();
+static void pipeCheckFile();
 static void pipeGetNodeNameList();
 static void pipeGetPipeNameList();
 static void pipeExit();
@@ -151,7 +155,9 @@ static const node_op opTable[] = {
 	{.op=PIPE_TIMER_STOP		,.func=pipeTimerStop},
 	{.op=PIPE_TIMER_SET			,.func=pipeTimerSet},
 	{.op=PIPE_TIMER_GET			,.func=pipeTimerGet},
-	{.op=PIPE_EXIT				,.func=pipeExit}
+	{.op=PIPE_EXIT				,.func=pipeExit},
+	{.op=PIPE_KILL				,.func=pipeKill},
+	{.op=PIPE_CHECK_FILE		,.func=pipeCheckFile}
 };
 
 //const value
@@ -747,6 +753,28 @@ void nodeSystemTimerGet(){
 	fileRead(fd[0],&period,sizeof(period));
 
 	fprintf(stdout,"Timer period is %lfms\n",period);
+}
+
+int nodeSystemKill(char* const killNode){
+	//send message head
+	uint8_t head = PIPE_KILL;
+	fileWrite(fd[1],&head,sizeof(head));
+
+	fileWriteStr(fd[1],killNode);
+}
+
+int nodeSystemCheck(char* const path){
+	//send message head
+	uint8_t head = PIPE_CHECK_FILE;
+	fileWrite(fd[1],&head,sizeof(head));
+
+	fileWriteStr(fd[1],path);
+
+	//wait result
+	int res = 0;
+	fileRead(fd[0],&res,sizeof(res));
+
+	return res;
 }
 
 char** nodeSystemGetNodeNameList(int* counts){
@@ -1795,6 +1823,86 @@ static void pipeTimerSet(){
 
 static void pipeTimerGet(){
 	fileWrite(fd[1],&systemSettingMemory->period,sizeof(systemSettingMemory->period));
+}
+
+static void pipeKill(){
+	//get nodeName
+	char nodeName[PATH_MAX];
+	fileReadStr(fd[0],nodeName,PATH_MAX);
+
+	//deleate
+	nodeData** itr;
+	LINEAR_LIST_FOREACH(activeNodeList,itr){
+		if(strcmp((*itr)->name,nodeName) == 0){
+			//kill
+			kill((*itr)->pid,SIGTERM);
+			//deleate node
+			nodeDeleate(*itr);
+			//deleate from list
+			LINEAR_LIST_ERASE(itr);
+			break;
+		}
+	}
+}
+
+static void pipeCheckFile(){
+	//init struct
+	nodeData* data = malloc(sizeof(nodeData));
+	memset(data,0,sizeof(nodeData));
+
+	//get path
+	char path[PATH_MAX];
+	fileReadStr(fd[0],path,sizeof(path));
+	data->filePath = malloc(strlen(path)+1);
+	strcpy(data->filePath,path);
+	data->name = strrchr(data->filePath,'/');
+	if(data->name)
+		data->name++;
+	else
+		data->name = data->filePath;
+	
+	//execute program
+	data->pid = popenRWasNonBlock(data->filePath,data->fd);
+	if(data->pid < 0){
+		debugPrintf("%s(): Failed execute file",__func__);
+		
+		//free
+		if((data->name < data->filePath) || (data->name > (data->filePath+strlen(data->filePath))))
+			free(data->name);
+		free(data->filePath);
+		free(data);
+
+		int res = -1;
+		fileWrite(fd[1],&res,sizeof(res));
+		return;
+	}
+
+	
+	//load properties
+	if(receiveNodeProperties(data)){
+		kill(data->pid,SIGTERM);
+		//free
+		if((data->name < data->filePath) || (data->name > (data->filePath+strlen(data->filePath))))
+			free(data->name);
+		free(data->filePath);
+		free(data);
+
+		int res = -1;
+		fileWrite(fd[1],&res,sizeof(res));
+		return;
+	}
+	else{
+		kill(data->pid,SIGTERM);
+		//free
+		if((data->name < data->filePath) || (data->name > (data->filePath+strlen(data->filePath))))
+			free(data->name);
+		free(data->filePath);
+		free(data);
+
+		int res = 0;
+		fileWrite(fd[1],&res,sizeof(res));
+		return;
+	}
 }
 
 static void pipeGetNodeNameList(){
